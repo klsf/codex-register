@@ -55,41 +55,43 @@ function normalizeProvider(value: unknown): MailProviderName {
 
 function loadConfig(): AppConfig {
     const configPath = path.resolve(process.cwd(), "config.json");
+    let raw: string;
     try {
-        const raw = readFileSync(configPath, "utf8");
-        const parsed = JSON.parse(raw) as AppConfigFile;
-        return {
-            provider: normalizeProvider(parsed.provider),
-            defaultPassword:
-                typeof parsed.defaultPassword === "string" && parsed.defaultPassword.trim()
-                    ? parsed.defaultPassword
-                    : DEFAULT_CONFIG.defaultPassword,
-            loopDelayMs: normalizeNumber(parsed.loopDelayMs, DEFAULT_CONFIG.loopDelayMs),
-            failureDelayMs: normalizeNumber(parsed.failureDelayMs, DEFAULT_CONFIG.failureDelayMs),
-            gmailAccessToken:
-                typeof parsed.gmailAccessToken === "string"
-                    ? parsed.gmailAccessToken.trim()
-                    : DEFAULT_CONFIG.gmailAccessToken,
-            gmailEmailAddress:
-                typeof parsed.gmailEmailAddress === "string"
-                    ? parsed.gmailEmailAddress.trim()
-                    : DEFAULT_CONFIG.gmailEmailAddress,
-            "2925EmailAddress":
-                typeof parsed["2925EmailAddress"] === "string"
-                    ? parsed["2925EmailAddress"].trim()
-                    : DEFAULT_CONFIG["2925EmailAddress"],
-            "2925Password":
-                typeof parsed["2925Password"] === "string"
-                    ? parsed["2925Password"].trim()
-                    : DEFAULT_CONFIG["2925Password"],
-            defaultProxyUrl:
-                typeof parsed.defaultProxyUrl === "string"
-                    ? parsed.defaultProxyUrl.trim()
-                    : DEFAULT_CONFIG.defaultProxyUrl,
-        };
+        raw = readFileSync(configPath, "utf8");
     } catch {
-        return DEFAULT_CONFIG;
+        throw new Error("未找到 config.json，请先复制 config.example.json 为 config.json 并按需修改配置");
     }
+
+    const parsed = JSON.parse(raw) as AppConfigFile;
+    return {
+        provider: normalizeProvider(parsed.provider),
+        defaultPassword:
+            typeof parsed.defaultPassword === "string" && parsed.defaultPassword.trim()
+                ? parsed.defaultPassword
+                : DEFAULT_CONFIG.defaultPassword,
+        loopDelayMs: normalizeNumber(parsed.loopDelayMs, DEFAULT_CONFIG.loopDelayMs),
+        failureDelayMs: normalizeNumber(parsed.failureDelayMs, DEFAULT_CONFIG.failureDelayMs),
+        gmailAccessToken:
+            typeof parsed.gmailAccessToken === "string"
+                ? parsed.gmailAccessToken.trim()
+                : DEFAULT_CONFIG.gmailAccessToken,
+        gmailEmailAddress:
+            typeof parsed.gmailEmailAddress === "string"
+                ? parsed.gmailEmailAddress.trim()
+                : DEFAULT_CONFIG.gmailEmailAddress,
+        "2925EmailAddress":
+            typeof parsed["2925EmailAddress"] === "string"
+                ? parsed["2925EmailAddress"].trim()
+                : DEFAULT_CONFIG["2925EmailAddress"],
+        "2925Password":
+            typeof parsed["2925Password"] === "string"
+                ? parsed["2925Password"].trim()
+                : DEFAULT_CONFIG["2925Password"],
+        defaultProxyUrl:
+            typeof parsed.defaultProxyUrl === "string"
+                ? parsed.defaultProxyUrl.trim()
+                : DEFAULT_CONFIG.defaultProxyUrl,
+    };
 }
 
 export const appConfig = loadConfig();

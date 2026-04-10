@@ -30,7 +30,9 @@
 npm install
 ```
 
-配置根目录 `config.json`：
+先复制 config.example.json 为 config.json。
+
+使用前别忘了把 `config.json` 里的 `defaultProxyUrl` 改成你自己的代理地址。
 
 ```json
 {
@@ -66,6 +68,12 @@ npm install
     - 2925 邮箱登录账号
 - `2925Password`
     - 2925 邮箱登录密码
+
+说明：
+
+- `config.example.json` 会提交到仓库，作为配置示例
+- 本地实际使用的是 `config.json`
+- `config.json` 已加入 `.gitignore`，不会提交到仓库
 
 ### Provider 说明
 
@@ -117,11 +125,11 @@ npm run dev -- [参数]
 
 - `--email <邮箱>`
     - 指定邮箱后，只执行单轮。
+    - 指定后会自动进入手动验证码模式，效果等同于同时带上 `--otp`。
     - 不带 `--auth` 时：执行注册 + 登录获取授权。
     - 带 `--auth` 时：只执行登录获取授权。
 - `--otp`
     - 手动输入邮箱验证码。
-    - 不加时默认自动读取邮箱验证码。
 - `--auth`
     - 仅登录模式，必须和 `--email` 一起使用。
 - `--st`
@@ -133,17 +141,17 @@ npm run dev -- [参数]
 # 自动循环注册
 npm run dev
 
-# 指定邮箱，执行一轮注册 + 登录
-npm run dev -- --email zxkl12345_test@2925.com
-
 # 指定邮箱，手动输入验证码
 npm run dev -- --email zxkl12345_test@2925.com --otp
 
-# 指定邮箱，只做登录授权
-npm run dev -- --email zxkl12345_test@2925.com --auth
+# 指定邮箱，省略 --otp 也会自动进入手动验证码模式
+npm run dev -- --email zxkl12345_test@2925.com
 
-# 指定邮箱，只做登录授权，并手动输入验证码
+# 指定邮箱，只做登录授权
 npm run dev -- --email zxkl12345_test@2925.com --auth --otp
+
+# 指定邮箱，只做登录授权；省略 --otp 也会自动进入手动验证码模式
+npm run dev -- --email zxkl12345_test@2925.com --auth
 
 # 指定邮箱，并启用浏览器 Sentinel
 npm run dev -- --email zxkl12345_test@2925.com --st
@@ -152,8 +160,8 @@ npm run dev -- --email zxkl12345_test@2925.com --st
 说明：
 
 - 默认密码来自 `config.json` 的 `defaultPassword`
-- `--email` 只表示指定邮箱，不再默认切换到手动验证码模式
-- 只有加 `--otp` 时，终端才会提示你手动输入 6 位邮箱验证码
+- 只要使用 `--email`，程序就会自动切到手动验证码模式
+- 显式传 `--otp` 也仍然有效
 - 自动模式下，成功后会等待 `config.json.loopDelayMs` 再进入下一轮；失败后会额外等待 `config.json.failureDelayMs` 再重试
 
 ### 2. `npm run register:batch`

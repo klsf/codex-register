@@ -16,7 +16,7 @@ function hasFlag(flag: string): boolean {
 
 async function runOnce(): Promise<void> {
     const email = readArgValue("--email").trim();
-    const manualOtp = hasFlag("--otp");
+    const manualOtp = hasFlag("--otp") || Boolean(email);
     const client = new OpenAIClient({
         email: email || undefined,
         password: appConfig.defaultPassword,
@@ -37,7 +37,7 @@ async function main() {
     let failCount = 0;
     const manualEmail = readArgValue("--email").trim();
     const authOnly = hasFlag("--auth");
-    const manualOtp = hasFlag("--otp");
+    const manualOtp = hasFlag("--otp") || Boolean(manualEmail);
 
     if (authOnly) {
         if (!manualEmail) {

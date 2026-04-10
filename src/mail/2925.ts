@@ -155,6 +155,13 @@ function isTokenExpired(token) {
     return Date.now() >= exp * 1000 - 60 * 1000;
 }
 
+function isSessionMailboxMatched(session) {
+    if (!session?.mailbox) {
+        return false;
+    }
+    return String(session.mailbox).trim().toLowerCase() === getProviderMailbox().trim().toLowerCase();
+}
+
 async function readCachedSession() {
     try {
         const raw = await readFile(SESSION_CACHE_FILE, "utf8");
@@ -264,13 +271,22 @@ async function login2925Mailbox() {
 }
 
 async function get2925Session(forceRefresh = false) {
-    if (!forceRefresh && memorySession && !isTokenExpired(memorySession.bearerToken)) {
+    if (
+        !forceRefresh &&
+        memorySession &&
+        isSessionMailboxMatched(memorySession) &&
+        !isTokenExpired(memorySession.bearerToken)
+    ) {
         return memorySession;
     }
 
     if (!forceRefresh) {
         const cached = await readCachedSession();
-        if (cached && !isTokenExpired(cached.bearerToken)) {
+        if (
+            cached &&
+            isSessionMailboxMatched(cached) &&
+            !isTokenExpired(cached.bearerToken)
+        ) {
             memorySession = cached;
             return cached;
         }
