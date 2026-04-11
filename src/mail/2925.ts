@@ -4,6 +4,7 @@ import {mkdir, readFile, writeFile} from "node:fs/promises";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
 import {appConfig} from "../config.js";
+import {DEFAULT_USER_AGENT} from "../constants.js";
 import {generateEmailName} from "./generate-email-name.js";
 
 const PROVIDER_DEVICE_UID = "28960a33-9af0-4ea7-9e1c-bccc5b7cc564";
@@ -21,8 +22,6 @@ const SESSION_CACHE_DIR = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)), "..", "..",
 );
 const SESSION_CACHE_FILE = path.join(SESSION_CACHE_DIR, "2925-account.json");
-const DEFAULT_USER_AGENT =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36 Edg/146.0.0.0";
 const MOBILE_USER_AGENT =
     "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1 Edg/146.0.0.0";
 let memorySession = null;

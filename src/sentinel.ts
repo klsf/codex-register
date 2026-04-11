@@ -2,6 +2,7 @@ import {randomBytes} from "node:crypto";
 import {readFile} from "node:fs/promises";
 import vm from "node:vm";
 import {DEFAULT_USER_AGENT} from "./constants.js";
+import {defaultDeviceProfile, getDeviceClientHints, type DeviceProfile} from "./device-profile.js";
 import {fetchSentinelTokenFromBrowser} from "./sentinel-browser.js";
 
 export interface SentinelProofOfWork {
@@ -26,6 +27,8 @@ export interface SentinelEnv {
     userAgent: string;
     language: string;
     languages: string[];
+    locale: string;
+    timezoneId: string;
     screenWidth: number;
     screenHeight: number;
     innerWidth: number;
@@ -34,7 +37,15 @@ export interface SentinelEnv {
     outerHeight: number;
     devicePixelRatio: number;
     hardwareConcurrency: number;
+    deviceMemory: number;
     jsHeapSizeLimit: number;
+    platform: string;
+    vendor: string;
+    maxTouchPoints: number;
+    hasTouch: boolean;
+    isMobile: boolean;
+    colorDepth: number;
+    pixelDepth: number;
     timeOrigin: number;
     scriptSources: string[];
     buildHash: string;
@@ -49,12 +60,8 @@ export interface FetchSentinelTokenOptions {
     fetch: typeof fetch;
     reqEndpoint: string;
     userAgent?: string;
+    deviceProfile?: DeviceProfile;
 }
-
-const DEFAULT_SENTINEL_VIEWPORT = {
-    width: 1280,
-    height: 720,
-};
 
 const DEFAULT_SENTINEL_DOCUMENT_KEYS = ["location"];
 const DEFAULT_SENTINEL_WINDOW_KEYS = [
@@ -152,21 +159,32 @@ function defaultBuildHash(scriptSources: string[]): string {
     return matched || "20260219f9f6";
 }
 
-export function defaultSentinelEnv(userAgent = DEFAULT_USER_AGENT): SentinelEnv {
+export function defaultSentinelEnv(deviceProfile?: DeviceProfile): SentinelEnv {
+    const profile = deviceProfile ?? defaultDeviceProfile();
     const scriptSources = defaultScriptSources();
     return {
-        userAgent,
-        language: "zh-CN",
-        languages: ["zh-CN"],
-        screenWidth: DEFAULT_SENTINEL_VIEWPORT.width,
-        screenHeight: DEFAULT_SENTINEL_VIEWPORT.height,
-        innerWidth: DEFAULT_SENTINEL_VIEWPORT.width,
-        innerHeight: DEFAULT_SENTINEL_VIEWPORT.height,
-        outerWidth: DEFAULT_SENTINEL_VIEWPORT.width,
-        outerHeight: DEFAULT_SENTINEL_VIEWPORT.height,
-        devicePixelRatio: 1,
-        hardwareConcurrency: 20,
-        jsHeapSizeLimit: 4294967296,
+        userAgent: profile.userAgent || DEFAULT_USER_AGENT,
+        language: profile.languages[0] || profile.locale,
+        languages: [...profile.languages],
+        locale: profile.locale,
+        timezoneId: profile.timezoneId,
+        screenWidth: profile.screenWidth,
+        screenHeight: profile.screenHeight,
+        innerWidth: profile.viewportWidth,
+        innerHeight: profile.viewportHeight,
+        outerWidth: profile.outerWidth,
+        outerHeight: profile.outerHeight,
+        devicePixelRatio: profile.deviceScaleFactor,
+        hardwareConcurrency: profile.hardwareConcurrency,
+        deviceMemory: profile.deviceMemory,
+        jsHeapSizeLimit: profile.jsHeapSizeLimit,
+        platform: profile.platform,
+        vendor: profile.vendor,
+        maxTouchPoints: profile.maxTouchPoints,
+        hasTouch: profile.hasTouch,
+        isMobile: profile.isMobile,
+        colorDepth: profile.colorDepth,
+        pixelDepth: profile.pixelDepth,
         timeOrigin: Date.now(),
         scriptSources,
         buildHash: defaultBuildHash(scriptSources),
@@ -180,9 +198,10 @@ export async function fetchSentinelToken(
     options: FetchSentinelTokenOptions,
 ): Promise<string> {
     const useBrowserSentinel = process.argv.includes("--st");
+    const profile = options.deviceProfile ?? defaultDeviceProfile();
     if (useBrowserSentinel) {
         try {
-            return await fetchSentinelTokenFromBrowser(options.flow, options.deviceID, options.userAgent);
+            return await fetchSentinelTokenFromBrowser(options.flow, options.deviceID, profile);
         } catch (error) {
             console.error(
                 `browserSentinelTokenFailed: flow=${options.flow} error=${error instanceof Error ? error.message : String(error)}`,
@@ -190,7 +209,10 @@ export async function fetchSentinelToken(
         }
     }
 
-    const env = defaultSentinelEnv(options.userAgent);
+    const env = defaultSentinelEnv({
+        ...profile,
+        userAgent: options.userAgent?.trim() || profile.userAgent,
+    });
     const generator = new SentinelGenerator(env);
     const reqToken = await generator.getRequirementsToken();
 
@@ -1125,25 +1147,107 @@ function createNavigatorObject(env: SentinelEnv): Record<string, unknown> {
             description: "Portable Document Format",
         },
     ];
+    const clientHints = getDeviceClientHints({
+        id: "sentinel",
+        family: env.isMobile ? "mobile" : "desktop",
+        browser: env.userAgent.includes("Edg/") ? "edge" : "chrome",
+        os: env.platform === "Win32" ? "windows" : "android",
+        osVersion: env.platform === "Win32" ? "10.0" : /Android (\d+)/.exec(env.userAgent)?.[1] ? `${/Android (\d+)/.exec(env.userAgent)?.[1]}.0.0` : "14.0.0",
+        userAgent: env.userAgent,
+        locale: env.locale,
+        languages: env.languages,
+        acceptLanguage: env.languages.join(","),
+        timezoneId: env.timezoneId,
+        viewportWidth: env.innerWidth,
+        viewportHeight: env.innerHeight,
+        screenWidth: env.screenWidth,
+        screenHeight: env.screenHeight,
+        outerWidth: env.outerWidth,
+        outerHeight: env.outerHeight,
+        deviceScaleFactor: env.devicePixelRatio,
+        hardwareConcurrency: env.hardwareConcurrency,
+        deviceMemory: env.deviceMemory,
+        jsHeapSizeLimit: env.jsHeapSizeLimit,
+        platform: env.platform,
+        vendor: env.vendor,
+        maxTouchPoints: env.maxTouchPoints,
+        hasTouch: env.hasTouch,
+        isMobile: env.isMobile,
+        colorDepth: env.colorDepth,
+        pixelDepth: env.pixelDepth,
+    });
+
     return {
         userAgent: env.userAgent,
         language: env.language,
         languages: env.languages,
         hardwareConcurrency: env.hardwareConcurrency,
+        deviceMemory: env.deviceMemory,
+        connection: {
+            effectiveType: "4g",
+            rtt: env.isMobile ? 150 : 50,
+            downlink: env.isMobile ? 9.5 : 10,
+            saveData: false,
+        },
         cookieEnabled: true,
         webdriver: false,
         plugins,
         mimeTypes,
         pdfViewerEnabled: true,
-        platform: "Win32",
-        vendor: "Google Inc.",
+        platform: env.platform,
+        vendor: env.vendor,
         appCodeName: "Mozilla",
         appName: "Netscape",
         appVersion: env.userAgent,
         product: "Gecko",
         productSub: "20030107",
-        maxTouchPoints: 0,
+        maxTouchPoints: env.maxTouchPoints,
         onLine: true,
+        userAgentData: {
+            mobile: env.isMobile,
+            platform: env.platform === "Win32" ? "Windows" : "Android",
+            brands: clientHints.secChUa
+                .split(", ")
+                .map((entry) => {
+                    const match = entry.match(/^"(.+)";v="(.+)"$/);
+                    return match ? {brand: match[1], version: match[2]} : null;
+                })
+                .filter(Boolean),
+            fullVersionList: clientHints.secChUaFullVersionList
+                .split(", ")
+                .map((entry) => {
+                    const match = entry.match(/^"(.+)";v="(.+)"$/);
+                    return match ? {brand: match[1], version: match[2]} : null;
+                })
+                .filter(Boolean),
+            getHighEntropyValues: async (hints: string[]) => {
+                const values = {
+                    architecture: env.platform === "Win32" ? "x86" : "arm",
+                    bitness: env.platform === "Win32" ? "64" : "64",
+                    mobile: env.isMobile,
+                    model: env.isMobile ? (env.userAgent.match(/Android [^;]+; ([^)]+)/)?.[1] ?? "") : "",
+                    platform: env.platform === "Win32" ? "Windows" : "Android",
+                    platformVersion: env.platform === "Win32" ? "15.0.0" : (/Android (\d+)/.exec(env.userAgent)?.[1] ? `${/Android (\d+)/.exec(env.userAgent)?.[1]}.0.0` : "14.0.0"),
+                    uaFullVersion: env.userAgent.match(/(?:Chrome|Edg)\/([\d.]+)/)?.[1] ?? "146.0.0.0",
+                    fullVersionList: clientHints.secChUaFullVersionList
+                        .split(", ")
+                        .map((entry) => {
+                            const match = entry.match(/^"(.+)";v="(.+)"$/);
+                            return match ? {brand: match[1], version: match[2]} : null;
+                        })
+                        .filter(Boolean),
+                    wow64: false,
+                } as Record<string, unknown>;
+
+                const output: Record<string, unknown> = {};
+                for (const hint of hints) {
+                    if (hint in values) {
+                        output[hint] = values[hint];
+                    }
+                }
+                return output;
+            },
+        },
     };
 }
 
@@ -1169,6 +1273,43 @@ function buildWindowObject(env: SentinelEnv): Record<string, unknown> {
             jsHeapSizeLimit: env.jsHeapSizeLimit,
         },
     };
+    const permissions = {
+        query: async (descriptor?: { name?: string }) => ({
+            name: descriptor?.name ?? "",
+            state: descriptor?.name === "notifications" ? "default" : "granted",
+            onchange: null,
+        }),
+    };
+    const mediaCapabilities = {
+        decodingInfo: async () => ({
+            supported: true,
+            smooth: true,
+            powerEfficient: true,
+        }),
+        encodingInfo: async () => ({
+            supported: true,
+            smooth: true,
+            powerEfficient: true,
+        }),
+    };
+    const chromeObject = {
+        app: {
+            isInstalled: false,
+            InstallState: {
+                DISABLED: "disabled",
+                INSTALLED: "installed",
+                NOT_INSTALLED: "not_installed",
+            },
+            RunningState: {
+                CANNOT_RUN: "cannot_run",
+                READY_TO_RUN: "ready_to_run",
+                RUNNING: "running",
+            },
+        },
+        runtime: {},
+        loadTimes: () => ({}),
+        csi: () => ({ startE: Date.now(), onloadT: Date.now(), pageT: 1, tran: 15 }),
+    };
 
     const windowObject: Record<string, unknown> = {
         location: {
@@ -1181,6 +1322,10 @@ function buildWindowObject(env: SentinelEnv): Record<string, unknown> {
         screen: {
             width: env.screenWidth,
             height: env.screenHeight,
+            availWidth: env.screenWidth,
+            availHeight: env.screenHeight,
+            colorDepth: env.colorDepth,
+            pixelDepth: env.pixelDepth,
         },
         performance,
         innerWidth: env.innerWidth,
@@ -1226,11 +1371,22 @@ function buildWindowObject(env: SentinelEnv): Record<string, unknown> {
             scale: env.devicePixelRatio,
         },
         event: undefined,
+        chrome: chromeObject,
+        permissions,
+        mediaCapabilities,
         clientInformation: {
             userAgent: env.userAgent,
             language: env.language,
             languages: env.languages,
             hardwareConcurrency: env.hardwareConcurrency,
+            deviceMemory: env.deviceMemory,
+        },
+        ontouchstart: env.hasTouch ? (() => undefined) : undefined,
+        navigatorConnection: {
+            effectiveType: "4g",
+            rtt: env.isMobile ? 150 : 50,
+            downlink: env.isMobile ? 9.5 : 10,
+            saveData: false,
         },
         styleMedia: {},
         localStorage,

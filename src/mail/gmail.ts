@@ -67,26 +67,8 @@ function buildGmailAlias(email) {
         throw new Error(`Gmail 邮箱格式不正确: ${email}`);
     }
 
-    const dotCount = Math.min(
-        Math.max(localPart.length - 1, 1),
-        Math.floor(Math.random() * 3) + 1,
-    );
-    const positions = new Set();
-    while (positions.size < dotCount) {
-        positions.add(Math.floor(Math.random() * (localPart.length - 1)) + 1);
-    }
-
-    const sortedPositions = [...positions].sort((a, b) => a - b);
-    let start = 0;
-    const parts = [];
-    for (const index of sortedPositions) {
-        parts.push(localPart.slice(start, index));
-        start = index;
-    }
-    parts.push(localPart.slice(start));
-
     const domain = GMAIL_DOMAINS[Math.floor(Math.random() * GMAIL_DOMAINS.length)];
-    return `${parts.join(".")}+${generateEmailName()}@${domain}`;
+    return `${localPart}+${generateEmailName()}@${domain}`;
 }
 
 function collectBodyText(payload, chunks = []) {

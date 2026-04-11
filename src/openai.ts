@@ -9,6 +9,7 @@ import path from "node:path";
 import makeFetchCookie from "fetch-cookie";
 import {CookieJar} from "tough-cookie";
 import {appConfig} from "./config.js";
+import {defaultDeviceProfile, type DeviceProfile, getDeviceClientHints} from "./device-profile.js";
 import {
     AUTH_AUTHORIZE_CONTINUE_URL,
     AUTH_BASE_URL,
@@ -199,7 +200,9 @@ export interface OpenAIClientOptions {
     email?: string;
     password: string;
     userAgent?: string;
+    deviceProfile?: DeviceProfile;
     manualMode?: boolean;
+    signupScreenHint?: string;
 }
 
 export class OpenAIClient {
@@ -209,6 +212,9 @@ export class OpenAIClient {
     readonly jar: CookieJar;
     readonly fetch: FetchLike;
     readonly userAgent: string;
+    readonly deviceProfile: DeviceProfile;
+    readonly clientHints: ReturnType<typeof getDeviceClientHints>;
+    readonly signupScreenHint: string;
     state = "";
     codeVerifier = "";
     deviceID = "";
@@ -216,8 +222,19 @@ export class OpenAIClient {
     constructor(options: OpenAIClientOptions) {
         this.email = options.email?.trim() ?? "";
         this.password = options.password;
-        this.userAgent = options.userAgent?.trim() || DEFAULT_USER_AGENT;
+        this.deviceProfile = options.deviceProfile
+            ? {
+                ...options.deviceProfile,
+                languages: [...options.deviceProfile.languages],
+            }
+            : {
+                ...defaultDeviceProfile(),
+                userAgent: options.userAgent?.trim() || DEFAULT_USER_AGENT,
+            };
+        this.userAgent = this.deviceProfile.userAgent;
+        this.clientHints = getDeviceClientHints(this.deviceProfile);
         this.manualMode = options.manualMode ?? !this.email;
+        this.signupScreenHint = options.signupScreenHint?.trim() || "login_or_signup";
         this.jar = new CookieJar();
         setGlobalDispatcher(createDispatcher(resolveProxyUrl(), shouldAllowInsecureTLS()));
         const cookieFetch = makeFetchCookie(fetch, this.jar) as FetchLike;
@@ -235,10 +252,12 @@ export class OpenAIClient {
         const oauthUrl = this.prepareManualLogin();
         const oauthResp = await this.fetch(oauthUrl, {
             redirect: "follow",
-            headers: {
-                "user-agent": this.userAgent,
+            headers: this.createBrowserHeaders({
                 "accept-encoding": "gzip, deflate, br",
-            },
+                "sec-fetch-dest": "document",
+                "sec-fetch-mode": "navigate",
+                "sec-fetch-site": "none",
+            }),
         });
         if (!oauthResp.ok) {
             throw new Error(`OauthUrl请求失败: ${oauthResp.status}`);
@@ -299,45 +318,113 @@ export class OpenAIClient {
     }
 
     async authRegisterHTTP(): Promise<string> {
-        const totalSteps = 7;
-        this.logProgress(1, totalSteps, "初始化注册会话");
+        const stepMessages = [
+            "初始化注册会话",
+            "生成注册邮箱",
+            "打开注册页",
+            "提交注册邮箱",
+        ];
+        let totalSteps = stepMessages.length;
+        let step = 1;
+        this.logProgress(step++, totalSteps, "初始化注册会话");
         await this.bootChatGPTSession();
-        this.logProgress(2, totalSteps, "生成注册邮箱");
+        this.logProgress(step++, totalSteps, "生成注册邮箱");
         this.email = await this.generateRegisterEmail();
         console.log("registerEmail:", this.email);
-        this.logProgress(3, totalSteps, "打开注册页");
+        this.logProgress(step++, totalSteps, "打开注册页");
         await this.openSignupPage(this.email);
 
-        this.logProgress(4, totalSteps, "提交注册邮箱");
+        this.logProgress(step++, totalSteps, "提交注册邮箱");
         let continueURL = await this.authorizeContinueForSignup();
 
         if (continueURL === `${AUTH_BASE_URL}/create-account/password`) {
-            this.logProgress(5, totalSteps, "提交注册密码");
+            totalSteps += 1;
+            this.logProgress(step++, totalSteps, "提交注册密码");
             continueURL = await this.registerPassword();
         }
 
         if (continueURL === AUTH_EMAIL_OTP_SEND_URL) {
-            this.logProgress(6, totalSteps, "发送邮箱验证码");
+            totalSteps += 1;
+            this.logProgress(step++, totalSteps, "发送邮箱验证码");
             continueURL = await this.sendEmailOtp();
         }
 
         if (continueURL === `${AUTH_BASE_URL}/email-verification`) {
-            this.logProgress(6, totalSteps, "提交邮箱验证码");
+            totalSteps += 1;
+            this.logProgress(step++, totalSteps, "提交邮箱验证码");
             continueURL = await this.emailOtpValidate();
         }
 
         if (continueURL === `${AUTH_BASE_URL}/about-you`) {
-            this.logProgress(6, totalSteps, "填写基础资料");
+            totalSteps += 1;
+            this.logProgress(step++, totalSteps, "填写基础资料");
             continueURL = await this.completeAboutYou();
         }
 
         if (continueURL.startsWith(`${CHATGPT_BASE_URL}/api/auth/callback/openai`)) {
-            this.logProgress(7, totalSteps, "完成注册");
+            totalSteps += 1;
+            this.logProgress(step++, totalSteps, "完成注册");
             await this.finishChatGPTRegistration(continueURL);
             console.log(`[注册成功] 邮箱：${this.email} 密码：${this.password}`);
         }
 
         return continueURL;
+    }
+
+    async authRegisterAndAuthorizeHTTP(): Promise<AuthLoginResult> {
+        const stepMessages = [
+            "打开直接注册授权页",
+            "提交注册邮箱",
+        ];
+        let totalSteps = stepMessages.length;
+        let step = 1;
+
+        if (!this.email) {
+            totalSteps += 1;
+            this.logProgress(step++, totalSteps, "生成注册邮箱");
+            this.email = await this.generateRegisterEmail();
+            console.log("registerEmail:", this.email);
+        }
+
+        this.logProgress(step++, totalSteps, "打开直接注册授权页");
+        await this.openDirectSignupAuthorizePage(this.email);
+
+        this.logProgress(step++, totalSteps, "提交注册邮箱");
+        let continueURL = await this.authorizeContinueForSignup(this.signupScreenHint);
+
+        if (continueURL === `${AUTH_BASE_URL}/create-account/password`) {
+            totalSteps += 1;
+            this.logProgress(step++, totalSteps, "提交注册密码");
+            continueURL = await this.registerPassword();
+        }
+
+        if (continueURL === AUTH_EMAIL_OTP_SEND_URL) {
+            totalSteps += 1;
+            this.logProgress(step++, totalSteps, "发送邮箱验证码");
+            continueURL = await this.sendEmailOtp();
+        }
+
+        if (continueURL === `${AUTH_BASE_URL}/email-verification`) {
+            totalSteps += 1;
+            this.logProgress(step++, totalSteps, "提交邮箱验证码");
+            continueURL = await this.emailOtpValidate();
+        }
+
+        if (continueURL === `${AUTH_BASE_URL}/about-you`) {
+            totalSteps += 1;
+            this.logProgress(step++, totalSteps, "填写基础资料");
+            continueURL = await this.completeAboutYou();
+        }
+
+        if (continueURL === `${AUTH_BASE_URL}/sign-in-with-chatgpt/codex/consent`) {
+            totalSteps += 1;
+            this.logProgress(step++, totalSteps, "选择工作区");
+            continueURL = await this.selectWorkspace(continueURL);
+        }
+
+        totalSteps += 1;
+        this.logProgress(step++, totalSteps, "交换授权并保存凭证");
+        return await this.finalizeAuthorizationFromContinueURL(continueURL);
     }
 
     prepareManualLogin(prompt: "login" | "none" = "login"): string {
@@ -366,6 +453,13 @@ export class OpenAIClient {
                 "content-type": "application/json",
                 "openai-sentinel-token": sentinelToken,
                 "user-agent": this.userAgent,
+                "accept-language": this.deviceProfile.acceptLanguage,
+                "sec-ch-ua": this.clientHints.secChUa,
+                "sec-ch-ua-full-version-list": this.clientHints.secChUaFullVersionList,
+                "sec-ch-ua-mobile": this.clientHints.secChUaMobile,
+                "sec-ch-ua-platform": this.clientHints.secChUaPlatform,
+                "sec-ch-ua-platform-version": this.clientHints.secChUaPlatformVersion,
+                "sec-ch-viewport-width": this.clientHints.secChViewportWidth,
             },
             body: JSON.stringify({
                 username: {
@@ -383,7 +477,7 @@ export class OpenAIClient {
         return payload.continue_url;
     }
 
-    async authorizeContinueForSignup(): Promise<string> {
+    async authorizeContinueForSignup(screenHint = "login_or_signup"): Promise<string> {
         const sentinelToken = await this.fetchSentinelToken("authorize_continue");
         const response = await this.postJSON(
             AUTH_AUTHORIZE_CONTINUE_URL,
@@ -392,7 +486,7 @@ export class OpenAIClient {
                     kind: "email",
                     value: this.email,
                 },
-                screen_hint: "login_or_signup",
+                screen_hint: screenHint,
             },
             {
                 referer: `${AUTH_BASE_URL}/log-in-or-create-account?usernameKind=email`,
@@ -480,6 +574,13 @@ export class OpenAIClient {
                 accept: "application/json",
                 referer: `${AUTH_BASE_URL}/create-account/password`,
                 "user-agent": this.userAgent,
+                "accept-language": this.deviceProfile.acceptLanguage,
+                "sec-ch-ua": this.clientHints.secChUa,
+                "sec-ch-ua-full-version-list": this.clientHints.secChUaFullVersionList,
+                "sec-ch-ua-mobile": this.clientHints.secChUaMobile,
+                "sec-ch-ua-platform": this.clientHints.secChUaPlatform,
+                "sec-ch-ua-platform-version": this.clientHints.secChUaPlatformVersion,
+                "sec-ch-viewport-width": this.clientHints.secChViewportWidth,
             },
         });
         if (!response.ok) {
@@ -498,6 +599,13 @@ export class OpenAIClient {
                 accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 referer: `${AUTH_BASE_URL}/email-verification`,
                 "user-agent": this.userAgent,
+                "accept-language": this.deviceProfile.acceptLanguage,
+                "sec-ch-ua": this.clientHints.secChUa,
+                "sec-ch-ua-full-version-list": this.clientHints.secChUaFullVersionList,
+                "sec-ch-ua-mobile": this.clientHints.secChUaMobile,
+                "sec-ch-ua-platform": this.clientHints.secChUaPlatform,
+                "sec-ch-ua-platform-version": this.clientHints.secChUaPlatformVersion,
+                "sec-ch-viewport-width": this.clientHints.secChViewportWidth,
             },
         });
 
@@ -510,6 +618,13 @@ export class OpenAIClient {
                 origin: AUTH_BASE_URL,
                 referer: consentURL,
                 "user-agent": this.userAgent,
+                "accept-language": this.deviceProfile.acceptLanguage,
+                "sec-ch-ua": this.clientHints.secChUa,
+                "sec-ch-ua-full-version-list": this.clientHints.secChUaFullVersionList,
+                "sec-ch-ua-mobile": this.clientHints.secChUaMobile,
+                "sec-ch-ua-platform": this.clientHints.secChUaPlatform,
+                "sec-ch-ua-platform-version": this.clientHints.secChUaPlatformVersion,
+                "sec-ch-viewport-width": this.clientHints.secChViewportWidth,
             },
             body: JSON.stringify({
                 workspace_id: workspaceID,
@@ -533,6 +648,13 @@ export class OpenAIClient {
                 headers: {
                     accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                     "user-agent": this.userAgent,
+                    "accept-language": this.deviceProfile.acceptLanguage,
+                    "sec-ch-ua": this.clientHints.secChUa,
+                    "sec-ch-ua-full-version-list": this.clientHints.secChUaFullVersionList,
+                    "sec-ch-ua-mobile": this.clientHints.secChUaMobile,
+                    "sec-ch-ua-platform": this.clientHints.secChUaPlatform,
+                    "sec-ch-ua-platform-version": this.clientHints.secChUaPlatformVersion,
+                    "sec-ch-viewport-width": this.clientHints.secChViewportWidth,
                 },
             });
 
@@ -557,13 +679,26 @@ export class OpenAIClient {
                 return this.extractAuthResult(response.url);
             }
 
-            const body = await response.text();
             throw new Error(
                 `OAuth跳转未到达callback: status=${response.status} url=${response.url}`,
             );
         }
 
         throw new Error(`OAuth跳转次数过多，最后停在: ${currentURL}`);
+    }
+
+    private async finalizeAuthorizationFromContinueURL(startURL: string): Promise<AuthLoginResult> {
+        if (startURL.startsWith(DEFAULT_REDIRECT_URI)) {
+            const result = this.extractAuthResult(startURL);
+            const authRecord = await this.exchangeCodeForToken(result.code);
+            result.authFile = await this.saveAuthRecord(authRecord);
+            return result;
+        }
+
+        const result = await this.followOAuthRedirects(startURL);
+        const authRecord = await this.exchangeCodeForToken(result.code);
+        result.authFile = await this.saveAuthRecord(authRecord);
+        return result;
     }
 
     async fetchSentinelToken(
@@ -579,6 +714,7 @@ export class OpenAIClient {
             fetch: this.fetch,
             reqEndpoint: "https://sentinel.openai.com/backend-api/sentinel/req",
             userAgent: this.userAgent,
+            deviceProfile: this.deviceProfile,
         });
     }
 
@@ -641,6 +777,13 @@ export class OpenAIClient {
                 accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 referer: `${AUTH_BASE_URL}/about-you`,
                 "user-agent": this.userAgent,
+                "accept-language": this.deviceProfile.acceptLanguage,
+                "sec-ch-ua": this.clientHints.secChUa,
+                "sec-ch-ua-full-version-list": this.clientHints.secChUaFullVersionList,
+                "sec-ch-ua-mobile": this.clientHints.secChUaMobile,
+                "sec-ch-ua-platform": this.clientHints.secChUaPlatform,
+                "sec-ch-ua-platform-version": this.clientHints.secChUaPlatformVersion,
+                "sec-ch-viewport-width": this.clientHints.secChViewportWidth,
             },
         });
         if (!response.ok) {
@@ -660,11 +803,13 @@ export class OpenAIClient {
             });
             const response = await this.fetch(tokenURL, {
                 method: "POST",
-                headers: {
+                headers: this.createBrowserHeaders({
                     accept: "application/json",
                     "content-type": "application/x-www-form-urlencoded",
-                    "user-agent": this.userAgent,
-                },
+                    "sec-fetch-dest": "empty",
+                    "sec-fetch-mode": "cors",
+                    "sec-fetch-site": "same-site",
+                }),
                 body,
             });
             if (!response.ok) {
@@ -690,7 +835,9 @@ export class OpenAIClient {
 
         const encodedPayload = cookie.split(".")[0];
         const payload = this.decodeSignedJson<ClientAuthSessionPayload>(encodedPayload);
-        const workspaceID = payload.workspaces?.[0]?.id;
+        const workspaceID =
+            payload.workspaces?.find((w) => w.kind === "personal")?.id
+            ?? payload.workspaces?.[0]?.id;
         if (!workspaceID) {
             throw new Error(`当前会话未发现 workspace: ${JSON.stringify(payload)}`);
         }
@@ -863,10 +1010,12 @@ export class OpenAIClient {
         const response = await this.fetch(`${CHATGPT_BASE_URL}/`, {
             method: "GET",
             redirect: "follow",
-            headers: {
-                "user-agent": this.userAgent,
+            headers: this.createBrowserHeaders({
                 "accept-encoding": "gzip, deflate, br",
-            },
+                "sec-fetch-dest": "document",
+                "sec-fetch-mode": "navigate",
+                "sec-fetch-site": "none",
+            }),
         });
         if (!response.ok) {
             throw new Error(`打开 chatgpt.com 失败: ${response.status}`);
@@ -909,13 +1058,15 @@ export class OpenAIClient {
             {
                 method: "POST",
                 redirect: "follow",
-                headers: {
+                headers: this.createBrowserHeaders({
                     accept: "*/*",
                     "content-type": "application/x-www-form-urlencoded",
                     origin: CHATGPT_BASE_URL,
                     referer: `${CHATGPT_BASE_URL}/`,
-                    "user-agent": this.userAgent,
-                },
+                    "sec-fetch-dest": "empty",
+                    "sec-fetch-mode": "cors",
+                    "sec-fetch-site": "same-origin",
+                }),
                 body,
             },
         );
@@ -931,11 +1082,13 @@ export class OpenAIClient {
         const authorizeResp = await this.fetch(payload.url, {
             method: "GET",
             redirect: "follow",
-            headers: {
-                "user-agent": this.userAgent,
+            headers: this.createBrowserHeaders({
                 "accept-encoding": "gzip, deflate, br",
                 referer: `${CHATGPT_BASE_URL}/`,
-            },
+                "sec-fetch-dest": "document",
+                "sec-fetch-mode": "navigate",
+                "sec-fetch-site": "same-site",
+            }),
         });
         if (!authorizeResp.ok) {
             throw new Error(`打开 OpenAI authorize 页失败: ${authorizeResp.status}`);
@@ -950,12 +1103,14 @@ export class OpenAIClient {
             sentinelToken?: string;
         },
     ): Promise<Response> {
-        const headers = new Headers({
+        const headers = this.createBrowserHeaders({
             accept: "application/json",
             "content-type": "application/json",
             origin: AUTH_BASE_URL,
             referer: options.referer,
-            "user-agent": this.userAgent,
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-origin",
         });
         if (options.sentinelToken) {
             headers.set("openai-sentinel-token", options.sentinelToken);
@@ -970,6 +1125,46 @@ export class OpenAIClient {
     private async readCookie(url: string, key: string): Promise<string> {
         const cookies = await this.jar.getCookies(url);
         return cookies.find((cookie) => cookie.key === key)?.value ?? "";
+    }
+
+    private async openDirectSignupAuthorizePage(email: string): Promise<void> {
+        const oauthUrl = this.prepareManualLogin();
+        const authorizeUrl = new URL(oauthUrl);
+        authorizeUrl.searchParams.set("screen_hint", this.signupScreenHint);
+        authorizeUrl.searchParams.set("login_hint", email);
+
+        const response = await this.fetch(authorizeUrl.toString(), {
+            method: "GET",
+            redirect: "follow",
+            headers: this.createBrowserHeaders({
+                "accept-encoding": "gzip, deflate, br",
+                "sec-fetch-dest": "document",
+                "sec-fetch-mode": "navigate",
+                "sec-fetch-site": "none",
+            }),
+        });
+        if (!response.ok) {
+            throw new Error(`打开直接注册授权页失败: ${response.status}`);
+        }
+
+        this.deviceID = await this.readCookie("https://openai.com", "oai-did");
+        if (!this.deviceID) {
+            throw new Error("直接注册授权页未返回 oai-did cookie");
+        }
+    }
+
+    private createBrowserHeaders(init: Record<string, string>): Headers {
+        return new Headers({
+            "user-agent": this.userAgent,
+            "accept-language": this.deviceProfile.acceptLanguage,
+            "sec-ch-ua": this.clientHints.secChUa,
+            "sec-ch-ua-full-version-list": this.clientHints.secChUaFullVersionList,
+            "sec-ch-ua-mobile": this.clientHints.secChUaMobile,
+            "sec-ch-ua-platform": this.clientHints.secChUaPlatform,
+            "sec-ch-ua-platform-version": this.clientHints.secChUaPlatformVersion,
+            "sec-ch-viewport-width": this.clientHints.secChViewportWidth,
+            ...init,
+        });
     }
 
     private async formatErrorResponse(response: Response): Promise<string> {

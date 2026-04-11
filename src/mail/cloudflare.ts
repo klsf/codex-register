@@ -44,7 +44,7 @@ function normalizeDomain(value: string): string {
 }
 
 function ensureDomainConfigured(): string {
-    const domain = normalizeDomain(appConfig.cloudflareEmailDomain || appConfig.selfHostedEmailDomain);
+    const domain = normalizeDomain(appConfig.cloudflareEmailDomain);
     if (!domain) {
         throw new Error("cloudflareEmailDomain 未配置，请先在 config.json 中填写 Cloudflare 邮箱域名");
     }

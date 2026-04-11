@@ -1,5 +1,5 @@
 import {appConfig} from "./config.js";
-import {generateRandomUserAgent} from "./constants.js";
+import {generateRandomDeviceProfile} from "./device-profile.js";
 import {OpenAIClient} from "./openai.js";
 
 function readArgValue(flag: string): string {
@@ -26,17 +26,40 @@ function readNumberArg(flag: string): number | null {
 async function runOnce(): Promise<void> {
     const email = readArgValue("--email").trim();
     const manualOtp = hasFlag("--otp");
-    const client = new OpenAIClient({
+    const directSignupAuth = hasFlag("--sign");
+    const deviceProfile = generateRandomDeviceProfile();
+    if (directSignupAuth) {
+        const client = new OpenAIClient({
+            email: email || undefined,
+            password: appConfig.defaultPassword,
+            deviceProfile,
+            manualMode: manualOtp,
+            signupScreenHint: "signup",
+        });
+        const result = await client.authRegisterAndAuthorizeHTTP();
+        console.log(
+            `[✅️授权成功] 邮箱：${client.email} 密码：${appConfig.defaultPassword} 授权文件：${result.authFile ?? ""}`,
+        );
+        return;
+    }
+
+    const registerClient = new OpenAIClient({
         email: email || undefined,
         password: appConfig.defaultPassword,
-        userAgent: generateRandomUserAgent(),
+        deviceProfile,
         manualMode: manualOtp,
     });
-    await client.authRegisterHTTP();
+    await registerClient.authRegisterHTTP();
 
-    const result = await client.authLoginHTTP();
+    const loginClient = new OpenAIClient({
+        email: registerClient.email,
+        password: appConfig.defaultPassword,
+        deviceProfile,
+        manualMode: manualOtp,
+    });
+    const result = await loginClient.authLoginHTTP();
     console.log(
-        `[✅️授权成功] 邮箱：${client.email} 密码：${appConfig.defaultPassword} 授权文件：${result.authFile ?? ""}`,
+        `[✅️授权成功] 邮箱：${loginClient.email} 密码：${appConfig.defaultPassword} 授权文件：${result.authFile ?? ""}`,
     );
 }
 
@@ -54,10 +77,11 @@ async function main() {
             throw new Error("使用 --auth 时必须同时指定 --email");
         }
         try {
+            const deviceProfile = generateRandomDeviceProfile();
             const client = new OpenAIClient({
                 email: manualEmail,
                 password: appConfig.defaultPassword,
-                userAgent: generateRandomUserAgent(),
+                deviceProfile,
                 manualMode: manualOtp,
             });
             const result = await client.authLoginHTTP();
@@ -84,12 +108,10 @@ async function main() {
         console.log(
             `第 ${round} 轮开始: 成功=${successCount} 失败=${failCount} 模式=自动`,
         );
-        let roundFailed = false;
         try {
             await runOnce();
             successCount += 1;
         } catch (error) {
-            roundFailed = true;
             failCount += 1;
             console.error(`[❌️授权失败]`, error);
         }

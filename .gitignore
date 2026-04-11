@@ -1,4 +1,5 @@
 .idea
+.codex
 auth
 dist
 node_modules

@@ -1,7 +1,7 @@
 # <p align="center">codex-register</p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-v1.0.2-111827">
+  <img alt="Version" src="https://img.shields.io/badge/version-v1.0.3-111827">
   <img alt="GitHub Repo stars" src="https://img.shields.io/github/stars/klsf/codex-register?style=social">
 </p>
 用于批量注册 OpenAI 账号、授权Codex登录生成授权文件，可直接导入cliproxyapi使用，以及批量检查凭证剩余可用额度。
@@ -33,6 +33,8 @@ npm install
 先复制 config.example.json 为 config.json。
 
 使用前别忘了把 `config.json` 里的 `defaultProxyUrl` 改成你自己的代理地址。
+
+当前版本已移除“邮箱邀请”和“团队清理”相关能力，`config.json` / `config.example.json` 中不再需要这类配置项。
 
 ```json
 {
@@ -143,6 +145,8 @@ npm run dev -- [参数]
     - 手动输入邮箱验证码；不带时会优先使用当前 provider 自动读取验证码。
 - `--auth`
     - 仅登录模式，必须和 `--email` 一起使用。
+- `--sign`
+    - 直接走 `screen_hint=sign` 的注册并授权模式，不再拆成“先注册再登录授权”两段。
 - `--st`
     - Sentinel 使用浏览器模式获取 token；不加时走本地计算逻辑。
 - `--n <轮数>`
@@ -169,6 +173,9 @@ npm run dev -- --email zxkl12345_test@2925.com --auth
 # 指定邮箱，只做登录授权并手动输入验证码
 npm run dev -- --email zxkl12345_test@2925.com --auth --otp
 
+# 直接注册并授权（screen_hint=sign）
+npm run dev -- --email zxkl12345_test@2925.com --sign
+
 # 指定邮箱，并启用浏览器 Sentinel
 npm run dev -- --email zxkl12345_test@2925.com --st
 ```
@@ -178,6 +185,7 @@ npm run dev -- --email zxkl12345_test@2925.com --st
 - 默认密码来自 `config.json` 的 `defaultPassword`
 - 指定 `--email` 只表示使用这个邮箱，不再强制进入手动验证码模式
 - 只有显式传 `--otp` 才会手动输入验证码
+- `--sign` 只影响“注册 + 授权”流程，对 `--auth` 纯授权模式无效
 - 自动模式下，成功后会等待 `config.json.loopDelayMs` 再进入下一轮
 
 ### 2. `npm run register:batch`
@@ -196,6 +204,8 @@ npm run register:batch -- [参数]
     - 从文本文件读取邮箱列表，每行一个。
 - `--delay-ms <毫秒>`
     - 每个邮箱之间的等待时间，默认 `3000`。
+- `--sign`
+    - 批量模式也改为走 `screen_hint=sign` 的直接注册并授权流程。
 - `--stop-on-error`
     - 遇到第一个失败邮箱后立即停止。
 

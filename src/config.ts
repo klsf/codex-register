@@ -14,7 +14,6 @@ interface AppConfigFile {
     cloudflareEmailDomain?: unknown;
     cloudflareApiBaseUrl?: unknown;
     cloudflareApiKey?: unknown;
-    selfHostedEmailDomain?: unknown;
     defaultProxyUrl?: unknown;
 }
 
@@ -29,7 +28,6 @@ export interface AppConfig {
     cloudflareEmailDomain: string;
     cloudflareApiBaseUrl: string;
     cloudflareApiKey: string;
-    selfHostedEmailDomain: string;
     defaultProxyUrl: string;
 }
 
@@ -44,7 +42,6 @@ const DEFAULT_CONFIG: AppConfig = {
     cloudflareEmailDomain: "",
     cloudflareApiBaseUrl: "",
     cloudflareApiKey: "",
-    selfHostedEmailDomain: "",
     defaultProxyUrl: "http://127.0.0.1:10808",
 };
 
@@ -58,9 +55,6 @@ function normalizeNumber(value: unknown, fallback: number): number {
 function normalizeProvider(value: unknown): MailProviderName {
     if (value === "2925" || value === "gmail" || value === "proxiedmail" || value === "cloudflare") {
         return value;
-    }
-    if (value === "selfhosted") {
-        return "cloudflare";
     }
     return DEFAULT_CONFIG.provider;
 }
@@ -101,9 +95,7 @@ function loadConfig(): AppConfig {
         cloudflareEmailDomain:
             typeof parsed.cloudflareEmailDomain === "string" && parsed.cloudflareEmailDomain.trim()
                 ? parsed.cloudflareEmailDomain.trim()
-                : typeof parsed.selfHostedEmailDomain === "string"
-                  ? parsed.selfHostedEmailDomain.trim()
-                  : DEFAULT_CONFIG.cloudflareEmailDomain,
+                : DEFAULT_CONFIG.cloudflareEmailDomain,
         cloudflareApiBaseUrl:
             typeof parsed.cloudflareApiBaseUrl === "string"
                 ? parsed.cloudflareApiBaseUrl.trim()
@@ -112,10 +104,6 @@ function loadConfig(): AppConfig {
             typeof parsed.cloudflareApiKey === "string"
                 ? parsed.cloudflareApiKey.trim()
                 : DEFAULT_CONFIG.cloudflareApiKey,
-        selfHostedEmailDomain:
-            typeof parsed.selfHostedEmailDomain === "string"
-                ? parsed.selfHostedEmailDomain.trim()
-                : DEFAULT_CONFIG.selfHostedEmailDomain,
         defaultProxyUrl:
             typeof parsed.defaultProxyUrl === "string"
                 ? parsed.defaultProxyUrl.trim()

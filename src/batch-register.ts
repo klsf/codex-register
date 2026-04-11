@@ -1,7 +1,7 @@
 import {readFile} from "node:fs/promises";
 import path from "node:path";
 import {appConfig} from "./config.js";
-import {generateRandomUserAgent} from "./constants.js";
+import {generateRandomDeviceProfile} from "./device-profile.js";
 import {OpenAIClient} from "./openai.js";
 
 const DEFAULT_DELAY_MS = 3000;
@@ -48,17 +48,41 @@ async function sleep(ms: number): Promise<void> {
 }
 
 async function runForEmail(email: string): Promise<void> {
-    const client = new OpenAIClient({
+    const deviceProfile = generateRandomDeviceProfile();
+    const directSignupAuth = hasFlag("--sign");
+    if (directSignupAuth) {
+        const client = new OpenAIClient({
+            email,
+            password: appConfig.defaultPassword,
+            deviceProfile,
+            manualMode: false,
+            signupScreenHint: "sign",
+        });
+        const result = await client.authRegisterAndAuthorizeHTTP();
+        console.log(
+            `[授权成功] 邮箱：${client.email} 密码：${appConfig.defaultPassword} 授权文件：${result.authFile ?? ""}`,
+        );
+        return;
+    }
+
+    const registerClient = new OpenAIClient({
         email,
         password: appConfig.defaultPassword,
-        userAgent: generateRandomUserAgent(),
+        deviceProfile,
         manualMode: false,
     });
 
-    await client.authRegisterHTTP();
-    const result = await client.authLoginHTTP();
+    await registerClient.authRegisterHTTP();
+
+    const loginClient = new OpenAIClient({
+        email: registerClient.email,
+        password: appConfig.defaultPassword,
+        deviceProfile,
+        manualMode: false,
+    });
+    const result = await loginClient.authLoginHTTP();
     console.log(
-        `[授权成功] 邮箱：${client.email} 密码：${appConfig.defaultPassword} 授权文件：${result.authFile ?? ""}`,
+        `[授权成功] 邮箱：${loginClient.email} 密码：${appConfig.defaultPassword} 授权文件：${result.authFile ?? ""}`,
     );
 }
 

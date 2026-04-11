@@ -1,15 +1,16 @@
 import {existsSync} from "node:fs";
 import {chromium, type Browser, type BrowserContext, type Page} from "playwright-core";
 import {appConfig} from "./config.js";
+import type {DeviceProfile} from "./device-profile.js";
 
 const SENTINEL_FRAME_URL = "https://sentinel.openai.com/backend-api/sentinel/frame.html?sv=20260219f9f6";
 const SENTINEL_COOKIE_DOMAIN = "sentinel.openai.com";
 const SENTINEL_SCRIPT_READY_TIMEOUT_MS = 20000;
-const SENTINEL_VIEWPORT = {width: 1280, height: 720};
 
 let browserPromise: Promise<Browser> | null = null;
 let contextPromise: Promise<BrowserContext> | null = null;
 let pagePromise: Promise<Page> | null = null;
+let contextProfileKey = "";
 
 declare global {
     interface Window {
@@ -50,28 +51,76 @@ async function getBrowser(): Promise<Browser> {
     return browserPromise;
 }
 
-async function getContext(userAgent?: string): Promise<BrowserContext> {
+function buildProfileKey(profile: DeviceProfile): string {
+    return JSON.stringify({
+        userAgent: profile.userAgent,
+        locale: profile.locale,
+        timezoneId: profile.timezoneId,
+        viewportWidth: profile.viewportWidth,
+        viewportHeight: profile.viewportHeight,
+        deviceScaleFactor: profile.deviceScaleFactor,
+        isMobile: profile.isMobile,
+        hasTouch: profile.hasTouch,
+    });
+}
+
+async function closeCurrentContext(): Promise<void> {
+    if (pagePromise) {
+        const page = await pagePromise.catch(() => null);
+        pagePromise = null;
+        await page?.close().catch(() => undefined);
+    }
+    if (contextPromise) {
+        const context = await contextPromise.catch(() => null);
+        contextPromise = null;
+        await context?.close().catch(() => undefined);
+    }
+    contextProfileKey = "";
+}
+
+async function getContext(profile: DeviceProfile): Promise<BrowserContext> {
+    const nextProfileKey = buildProfileKey(profile);
+    if (contextPromise && contextProfileKey !== nextProfileKey) {
+        await closeCurrentContext();
+    }
+
     if (!contextPromise) {
         contextPromise = (async () => {
             const browser = await getBrowser();
             return browser.newContext({
-                viewport: SENTINEL_VIEWPORT,
-                deviceScaleFactor: 1,
-                locale: "zh-CN",
-                userAgent: userAgent?.trim() || undefined,
+                viewport: {
+                    width: profile.viewportWidth,
+                    height: profile.viewportHeight,
+                },
+                screen: {
+                    width: profile.screenWidth,
+                    height: profile.screenHeight,
+                },
+                deviceScaleFactor: profile.deviceScaleFactor,
+                locale: profile.locale,
+                timezoneId: profile.timezoneId,
+                userAgent: profile.userAgent,
+                isMobile: profile.isMobile,
+                hasTouch: profile.hasTouch,
+                extraHTTPHeaders: {
+                    "accept-language": profile.acceptLanguage,
+                    "sec-ch-ua-mobile": profile.isMobile ? "?1" : "?0",
+                },
             });
         })().catch((error) => {
             contextPromise = null;
+            contextProfileKey = "";
             throw error;
         });
+        contextProfileKey = nextProfileKey;
     }
     return contextPromise;
 }
 
-async function getSentinelPage(userAgent?: string): Promise<Page> {
+async function getSentinelPage(profile: DeviceProfile): Promise<Page> {
     if (!pagePromise) {
         pagePromise = (async () => {
-            const context = await getContext(userAgent);
+            const context = await getContext(profile);
             return context.newPage();
         })().catch((error) => {
             pagePromise = null;
@@ -113,9 +162,9 @@ async function loadSentinelFrame(page: Page): Promise<void> {
 export async function fetchSentinelTokenFromBrowser(
     flow: string,
     deviceID: string,
-    userAgent?: string,
+    profile: DeviceProfile,
 ): Promise<string> {
-    const page = await getSentinelPage(userAgent);
+    const page = await getSentinelPage(profile);
     await ensureDeviceCookie(page, deviceID);
     await loadSentinelFrame(page);
 

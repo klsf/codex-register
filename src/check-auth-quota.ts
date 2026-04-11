@@ -2,7 +2,7 @@ import {createRequire} from "node:module";
 import {mkdir, readdir, readFile, rename, writeFile} from "node:fs/promises";
 import path from "node:path";
 import {appConfig} from "./config.js";
-import {AUTH_OAUTH_TOKEN_URLS, DEFAULT_CLIENT_ID} from "./constants.js";
+import {AUTH_OAUTH_TOKEN_URLS, DEFAULT_CLIENT_ID, DEFAULT_USER_AGENT} from "./constants.js";
 
 interface AuthRecord {
     access_token?: string;
@@ -73,8 +73,6 @@ interface AuthSummary {
 const DEFAULT_AUTH_DIR = path.resolve(process.cwd(), "auth");
 const REQUEST_TIMEOUT_MS = 15000;
 const USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
-const DEFAULT_USER_AGENT =
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
 
 const require = createRequire(import.meta.url);
 const {
@@ -196,14 +194,6 @@ function formatRemaining(value: number | undefined): string {
         return "-";
     }
     return `${Math.max(0, 100 - value).toFixed(2)}%`;
-}
-
-function formatReset(seconds: number | undefined): string {
-    if (typeof seconds !== "number" || seconds <= 0 || Number.isNaN(seconds)) {
-        return "-";
-    }
-    const target = new Date(Date.now() + seconds * 1000).toISOString();
-    return `${seconds}s (${target})`;
 }
 
 function formatResetAt(seconds: number | undefined): string {
@@ -449,7 +439,7 @@ async function moveTo401Dir(filePath: string): Promise<boolean> {
     return true;
 }
 
-async function summarizeAuth(filePath: string): Promise<AuthSummary> {
+async function summarizeAuth(filePath: string, forceRefresh: boolean): Promise<AuthSummary> {
     let record = await loadAuthRecord(filePath);
     const claims = decodeJwtClaims(record.id_token ?? record.access_token);
     const email = record.email?.trim() || claims?.email?.trim() || path.basename(filePath);
@@ -475,8 +465,27 @@ async function summarizeAuth(filePath: string): Promise<AuthSummary> {
     }
 
     let movedTo401 = false;
-    let probe = await sendUsageProbe(record.access_token, record.account_id?.trim() || "");
-    let message = extractMessage(probe.body);
+    let probe: ProbeResponse;
+    let message = "";
+
+    if (forceRefresh) {
+        const refreshed = await refreshAccessToken(record);
+        if (refreshed.record) {
+            record = refreshed.record;
+            await saveAuthRecord(filePath, record);
+            probe = await sendUsageProbe(record.access_token ?? "", record.account_id?.trim() || "");
+            message = extractMessage(probe.body);
+        } else {
+            probe = {
+                status: refreshed.status ?? 0,
+                body: refreshed.error || "refresh 失败",
+            };
+            message = refreshed.error || "refresh 失败";
+        }
+    } else {
+        probe = await sendUsageProbe(record.access_token, record.account_id?.trim() || "");
+        message = extractMessage(probe.body);
+    }
 
     if (probe.status === 401) {
         if (shouldMoveTo401(message)) {
@@ -568,6 +577,7 @@ async function summarizeAuth(filePath: string): Promise<AuthSummary> {
 async function main(): Promise<void> {
     const authDir = path.resolve(readFlagValue("--dir").trim() || DEFAULT_AUTH_DIR);
     const limitArg = Number.parseInt(readFlagValue("--limit").trim(), 10);
+    const forceRefresh = hasFlag("--refresh");
     const files = await collectAuthFiles(authDir);
     const targetFiles =
         Number.isFinite(limitArg) && limitArg > 0 ? files.slice(0, limitArg) : files;
@@ -576,13 +586,13 @@ async function main(): Promise<void> {
         throw new Error(`未在目录中找到授权文件: ${authDir}`);
     }
 
-    console.log(`准备检查 ${targetFiles.length} 个 auth 文件: ${authDir}`);
+    console.log(`准备检查 ${targetFiles.length} 个 auth 文件: ${authDir}${forceRefresh ? " (强制刷新 token)" : ""}`);
 
     const rows: AuthSummary[] = [];
     for (let index = 0; index < targetFiles.length; index += 1) {
         const filePath = targetFiles[index];
         console.log(`[${index + 1}/${targetFiles.length}] 检查 ${maskPath(filePath)}`);
-        const row = await summarizeAuth(filePath);
+        const row = await summarizeAuth(filePath, forceRefresh);
         rows.push(row);
         printCheckLine(row);
         if (hasFlag("--verbose")) {
