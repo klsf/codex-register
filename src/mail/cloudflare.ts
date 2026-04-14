@@ -1,15 +1,7 @@
 import {appConfig} from "../config.js";
-import {createRequire} from "node:module";
 import {generateEmailName} from "./generate-email-name.js";
+import {Agent, ProxyAgent} from "undici";
 
-const require = createRequire(import.meta.url);
-const {
-    ProxyAgent,
-    Agent,
-}: {
-    ProxyAgent: new (options: { uri: string; requestTls?: { rejectUnauthorized?: boolean } }) => unknown;
-    Agent: new (options?: { connect?: { rejectUnauthorized?: boolean } }) => unknown;
-} = require("undici");
 
 interface CloudflareMailItem {
     id?: number;

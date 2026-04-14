@@ -5,12 +5,13 @@
   "type": "module",
   "scripts": {
     "dev": "tsx src/index.ts",
-    "register:batch": "tsx src/batch-register.ts",
-    "check:quota": "tsx src/check-auth-quota.ts",
-    "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js"
+    "build": "tsup --config tsup.config.ts",
+    "start": "node bundle/index.cjs",
+    "check": "node bundle/check-auth-quota.cjs",
+    "batch": "node bundle/batch-register.cjs"
   },
   "dependencies": {
+    "chromium-bidi": "^15.0.0",
     "fetch-cookie": "^3.1.0",
     "playwright-core": "^1.59.1",
     "socks": "^2.8.7",
@@ -19,6 +20,7 @@
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
+    "tsup": "^8.5.1",
     "tsx": "^4.19.2",
     "typescript": "^5.9.2"
   }

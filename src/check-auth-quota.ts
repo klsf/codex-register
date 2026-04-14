@@ -1,6 +1,7 @@
-import {createRequire} from "node:module";
+import {cpus} from "node:os";
 import {mkdir, readdir, readFile, rename, writeFile} from "node:fs/promises";
 import path from "node:path";
+import {fetch as undiciFetch, Agent, ProxyAgent} from "undici";
 import {appConfig} from "./config.js";
 import {AUTH_OAUTH_TOKEN_URLS, DEFAULT_CLIENT_ID, DEFAULT_USER_AGENT} from "./constants.js";
 
@@ -53,6 +54,11 @@ interface UsagePayload {
     [key: string]: unknown;
 }
 
+interface IndexedAuthSummary {
+    index: number;
+    row: AuthSummary;
+}
+
 interface AuthSummary {
     file: string;
     email: string;
@@ -74,19 +80,6 @@ const DEFAULT_AUTH_DIR = path.resolve(process.cwd(), "auth");
 const REQUEST_TIMEOUT_MS = 15000;
 const USAGE_URL = "https://chatgpt.com/backend-api/wham/usage";
 
-const require = createRequire(import.meta.url);
-const {
-    fetch: undiciFetch,
-    Agent,
-    ProxyAgent,
-}: {
-    fetch: typeof fetch;
-    Agent: new (options?: { connect?: { rejectUnauthorized?: boolean } }) => unknown;
-    ProxyAgent: new (options: {
-        uri: string;
-        requestTls?: { rejectUnauthorized?: boolean };
-    }) => unknown;
-} = require("undici");
 
 function readFlagValue(flag: string): string {
     const index = process.argv.indexOf(flag);
@@ -194,6 +187,15 @@ function formatRemaining(value: number | undefined): string {
         return "-";
     }
     return `${Math.max(0, 100 - value).toFixed(2)}%`;
+}
+
+function parsePercent(value: string): number | null {
+    const normalized = value.trim();
+    if (!normalized || normalized === "-" || !normalized.endsWith("%")) {
+        return null;
+    }
+    const parsed = Number.parseFloat(normalized.slice(0, -1));
+    return Number.isFinite(parsed) ? parsed : null;
 }
 
 function formatResetAt(seconds: number | undefined): string {
@@ -439,6 +441,44 @@ async function moveTo401Dir(filePath: string): Promise<boolean> {
     return true;
 }
 
+function resolveConcurrency(total: number): number {
+    const rawValue = readFlagValue("--concurrency").trim() || readFlagValue("-c").trim();
+    const parsed = Number.parseInt(rawValue, 10);
+    if (Number.isFinite(parsed) && parsed > 0) {
+        return Math.min(parsed, total);
+    }
+    const cpuCount = Math.max(1, cpus().length || 1);
+    return Math.min(Math.max(4, cpuCount), total);
+}
+
+async function mapWithConcurrency<T, R>(
+    items: T[],
+    concurrency: number,
+    worker: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+    if (!items.length) {
+        return [];
+    }
+
+    const results = new Array<R>(items.length);
+    let nextIndex = 0;
+
+    const runWorker = async (): Promise<void> => {
+        while (true) {
+            const currentIndex = nextIndex;
+            nextIndex += 1;
+            if (currentIndex >= items.length) {
+                return;
+            }
+            results[currentIndex] = await worker(items[currentIndex], currentIndex);
+        }
+    };
+
+    const workers = Array.from({length: Math.min(concurrency, items.length)}, () => runWorker());
+    await Promise.all(workers);
+    return results;
+}
+
 async function summarizeAuth(filePath: string, forceRefresh: boolean): Promise<AuthSummary> {
     let record = await loadAuthRecord(filePath);
     const claims = decodeJwtClaims(record.id_token ?? record.access_token);
@@ -578,6 +618,7 @@ async function main(): Promise<void> {
     const authDir = path.resolve(readFlagValue("--dir").trim() || DEFAULT_AUTH_DIR);
     const limitArg = Number.parseInt(readFlagValue("--limit").trim(), 10);
     const forceRefresh = hasFlag("--refresh");
+    const verbose = hasFlag("--verbose");
     const files = await collectAuthFiles(authDir);
     const targetFiles =
         Number.isFinite(limitArg) && limitArg > 0 ? files.slice(0, limitArg) : files;
@@ -586,24 +627,38 @@ async function main(): Promise<void> {
         throw new Error(`未在目录中找到授权文件: ${authDir}`);
     }
 
-    console.log(`准备检查 ${targetFiles.length} 个 auth 文件: ${authDir}${forceRefresh ? " (强制刷新 token)" : ""}`);
+    const concurrency = resolveConcurrency(targetFiles.length);
+    console.log(
+        `准备检查 ${targetFiles.length} 个 auth 文件: ${authDir}${forceRefresh ? " (强制刷新 token)" : ""} (并发: ${concurrency})`,
+    );
 
-    const rows: AuthSummary[] = [];
-    for (let index = 0; index < targetFiles.length; index += 1) {
-        const filePath = targetFiles[index];
-        console.log(`[${index + 1}/${targetFiles.length}] 检查 ${maskPath(filePath)}`);
-        const row = await summarizeAuth(filePath, forceRefresh);
-        rows.push(row);
-        printCheckLine(row);
-        if (hasFlag("--verbose")) {
-            console.log(`RAW_STATUS: ${row.rawStatus}`);
-            console.log("RAW_BODY_START");
-            console.log(row.rawBody);
-            console.log("RAW_BODY_END");
-        }
-    }
-    const availableCount = rows.filter((row) => row.ok).length;
-    console.log(`剩余可用：${availableCount}/${rows.length}`);
+    const indexedRows = await mapWithConcurrency<string, IndexedAuthSummary>(
+        targetFiles,
+        concurrency,
+        async (filePath, index) => {
+            const row = await summarizeAuth(filePath, forceRefresh);
+            printCheckLine(row);
+            if (verbose) {
+                console.log(`RAW_STATUS: ${row.rawStatus}`);
+                console.log("RAW_BODY_START");
+                console.log(row.rawBody);
+                console.log("RAW_BODY_END");
+            }
+            return {index, row};
+        },
+    );
+    const rows = indexedRows
+        .sort((left, right) => left.index - right.index)
+        .map((entry) => entry.row);
+    const totalCount = rows.length;
+    const availableRows = rows.filter((row) => row.ok);
+    const availableCount = availableRows.length;
+    const limitedCount = rows.filter((row) => parsePercent(row.remaining) === 0).length;
+    const movedCount = rows.filter((row) => row.movedTo401).length;
+    const totalRemaining = availableRows.reduce((sum, row) => sum + ((parsePercent(row.remaining) ?? 0) / 100), 0);
+    console.log(
+        `总数 ${totalCount} | 可用 ${availableCount} | 限额 ${limitedCount} | 移除 ${movedCount} | 可用额度 ${totalRemaining.toFixed(2)}`,
+    );
     if (hasFlag("--table")) {
         printTable(rows);
     }

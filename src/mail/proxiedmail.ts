@@ -1,18 +1,10 @@
 // @ts-nocheck
-import {createRequire} from "node:module";
 import {readFile, writeFile} from "node:fs/promises";
 import path from "node:path";
 import {appConfig} from "../config.js";
 import {generateEmailName} from "./generate-email-name.js";
+import {Agent, ProxyAgent} from "undici";
 
-const require = createRequire(import.meta.url);
-const {
-    ProxyAgent,
-    Agent,
-}: {
-    ProxyAgent: new (options: { uri: string; requestTls?: { rejectUnauthorized?: boolean } }) => unknown;
-    Agent: new (options?: { connect?: { rejectUnauthorized?: boolean } }) => unknown;
-} = require("undici");
 
 const PROXIEDMAIL_BASE_URL = "https://proxiedmail.com/api/v1";
 const PROXIEDMAIL_API_TOKEN = "1f925b5c7a6872b92cc11c56c2c1be6c";
@@ -459,9 +451,3 @@ async function main() {
     console.log(`proxyAddress=${proxyAddress}`);
 }
 
-if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, "/"))) {
-    main().catch((error) => {
-        console.error(error);
-        process.exitCode = 1;
-    });
-}

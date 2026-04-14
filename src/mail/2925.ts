@@ -18,9 +18,7 @@ const MAIL_READ_URL =
     "https://www.2925.com/mailv2/maildata/MailRead/mails/read";
 const MOVE_MAILS_URL =
     "https://www.2925.com/mailv2/maildata/MailData/mails/folder";
-const SESSION_CACHE_DIR = path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)), "..", "..",
-);
+const SESSION_CACHE_DIR = process.cwd();
 const SESSION_CACHE_FILE = path.join(SESSION_CACHE_DIR, "2925-account.json");
 const MOBILE_USER_AGENT =
     "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1 Edg/146.0.0.0";
@@ -705,11 +703,3 @@ async function main() {
     console.log(JSON.stringify(result, null, 2));
 }
 
-const entryFilePath = process.argv[1] ?? "";
-
-if (entryFilePath && fileURLToPath(import.meta.url) === entryFilePath) {
-    main().catch((error) => {
-        console.error(error);
-        process.exitCode = 1;
-    });
-}

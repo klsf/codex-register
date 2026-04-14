@@ -1,7 +1,8 @@
 .idea
 .codex
 auth
-dist
+bundle
+hotmail
 node_modules
 config.json
 2925-account.json

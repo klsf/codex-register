@@ -1,4 +1,3 @@
-import {createRequire} from "node:module";
 import {mkdir, writeFile} from "node:fs/promises";
 import {createInterface} from "node:readline/promises";
 import net from "node:net";
@@ -6,6 +5,8 @@ import {stdin as input, stdout as output} from "node:process";
 import tls from "node:tls";
 import {fileURLToPath, URLSearchParams} from "node:url";
 import path from "node:path";
+import {Agent, ProxyAgent, setGlobalDispatcher} from "undici";
+import {SocksClient} from "socks";
 import makeFetchCookie from "fetch-cookie";
 import {CookieJar} from "tough-cookie";
 import {appConfig} from "./config.js";
@@ -29,19 +30,6 @@ import {fetchSentinelToken} from "./sentinel.js";
 import {pkceCodeChallenge, randomUrlSafeString,} from "./utils.js";
 
 type FetchLike = typeof fetch;
-const require = createRequire(import.meta.url);
-const {
-    Agent,
-    ProxyAgent,
-    setGlobalDispatcher,
-}: {
-    Agent: new (options?: any) => unknown;
-    ProxyAgent: new (options: any) => unknown;
-    setGlobalDispatcher: (dispatcher: unknown) => void;
-} = require("undici");
-const {SocksClient}: {
-    SocksClient: { createConnection: (options: any) => Promise<{ socket: net.Socket }> }
-} = require("socks");
 
 const DEFAULT_INSECURE_TLS = true;
 const FETCH_RETRY_COUNT = 3;
@@ -922,11 +910,7 @@ export class OpenAIClient {
     }
 
     private async saveAuthRecord(record: SavedAuthRecord): Promise<string> {
-        const authDir = path.resolve(
-            path.dirname(fileURLToPath(import.meta.url)),
-            "..",
-            "auth",
-        );
+        const authDir = path.resolve(process.cwd(), "auth");
         await mkdir(authDir, {recursive: true});
         const now = new Date();
         const date = [

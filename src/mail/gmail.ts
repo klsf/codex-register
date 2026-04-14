@@ -241,9 +241,3 @@ async function main() {
     console.log(`verificationCode=${code}`);
 }
 
-if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, "/"))) {
-    main().catch((error) => {
-        console.error(error);
-        process.exitCode = 1;
-    });
-}

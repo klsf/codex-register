@@ -1,5 +1,6 @@
 import {randomBytes} from "node:crypto";
 import {readFile} from "node:fs/promises";
+import path from "node:path";
 import vm from "node:vm";
 import {DEFAULT_USER_AGENT} from "./constants.js";
 import {defaultDeviceProfile, getDeviceClientHints, type DeviceProfile} from "./device-profile.js";
@@ -419,7 +420,7 @@ async function loadSdkTurnstileRunner(
         return cachedSdkRunner;
     }
 
-    const sdkPath = new URL("../sdk.js", import.meta.url);
+    const sdkPath = path.resolve(process.cwd(), "sdk.js");
     const sdkSource = await readFile(sdkPath, "utf8");
     const patchedSource = sdkSource.replace(
         "t.init=we,t.sessionObserverToken=async function(t){",

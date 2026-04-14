@@ -1,7 +1,7 @@
 import {readFileSync} from "node:fs";
 import path from "node:path";
 
-export type MailProviderName = "2925" | "gmail" | "proxiedmail" | "cloudflare";
+export type MailProviderName = "2925" | "gmail" | "proxiedmail" | "cloudflare" | "hotmail";
 
 interface AppConfigFile {
     provider?: unknown;
@@ -53,7 +53,7 @@ function normalizeNumber(value: unknown, fallback: number): number {
 }
 
 function normalizeProvider(value: unknown): MailProviderName {
-    if (value === "2925" || value === "gmail" || value === "proxiedmail" || value === "cloudflare") {
+    if (value === "2925" || value === "gmail" || value === "proxiedmail" || value === "cloudflare" || value === "hotmail") {
         return value;
     }
     return DEFAULT_CONFIG.provider;
