@@ -1,6 +1,7 @@
 import {appConfig} from "../config.js";
 import {generateEmailName} from "./generate-email-name.js";
-import {Agent, ProxyAgent} from "undici";
+import {fetch as undiciFetch, Agent, ProxyAgent, type Dispatcher, type RequestInit as UndiciRequestInit} from "undici";
+import {findLatestVerificationMail} from "./verification-matcher.js";
 
 
 interface CloudflareMailItem {
@@ -24,8 +25,6 @@ interface CloudflareLatestMailPayload extends CloudflareMailItem {}
 
 const CLOUDFLARE_POLL_ATTEMPTS = 36;
 const CLOUDFLARE_POLL_INTERVAL_MS = 5000;
-
-const lastVerificationCodeByEmail = new Map<string, string>();
 
 function normalizeEmail(value: string): string {
     return String(value ?? "").trim().toLowerCase();
@@ -59,26 +58,6 @@ function ensureApiKeyConfigured(): string {
     return apiKey;
 }
 
-function extractVerificationCode(text: string): string {
-    const raw = String(text ?? "");
-    if (!raw) {
-        return "";
-    }
-
-    const directMatch = raw.match(/\b(\d{6})\b/);
-    if (directMatch?.[1]) {
-        return directMatch[1];
-    }
-
-    const compactMatch = raw.replace(/<[^>]+>/g, " ").match(/(?:^|[^\d])((?:\d[\s-]*){6})(?:[^\d]|$)/);
-    if (!compactMatch?.[1]) {
-        return "";
-    }
-
-    const digitsOnly = compactMatch[1].replace(/\D/g, "");
-    return digitsOnly.length === 6 ? digitsOnly : "";
-}
-
 function buildMailbox(email: string): string {
     const mailbox = normalizeEmail(email);
     if (!mailbox.includes("@")) {
@@ -87,7 +66,7 @@ function buildMailbox(email: string): string {
     return mailbox;
 }
 
-function buildDispatcher() {
+function buildDispatcher(): Dispatcher {
     const proxyUrl = String(appConfig.defaultProxyUrl ?? "").trim();
     return proxyUrl
         ? new ProxyAgent({
@@ -99,11 +78,11 @@ function buildDispatcher() {
         });
 }
 
-async function cloudflareFetch(input: string | URL, init: RequestInit = {}) {
-    return fetch(input, {
+async function cloudflareFetch(input: string | URL, init: UndiciRequestInit = {}) {
+    return undiciFetch(input, {
         ...init,
         dispatcher: buildDispatcher(),
-    } as RequestInit & { dispatcher: unknown });
+    } satisfies UndiciRequestInit);
 }
 
 async function fetchLatestMailbox(email: string): Promise<CloudflareLatestMailPayload | null> {
@@ -160,32 +139,6 @@ async function fetchMailboxList(email: string): Promise<CloudflareMailboxListPay
     return payload;
 }
 
-function findVerificationCode(mail: CloudflareMailItem | null | undefined): { verificationCode: string; source: string } | null {
-    if (!mail) {
-        return null;
-    }
-
-    const subject = String(mail.subject ?? "");
-    const rawText = String(mail.raw_text ?? "");
-    const subjectCode = extractVerificationCode(subject);
-    if (subjectCode) {
-        return {
-            verificationCode: subjectCode,
-            source: subject,
-        };
-    }
-
-    const rawTextCode = extractVerificationCode(rawText);
-    if (rawTextCode) {
-        return {
-            verificationCode: rawTextCode,
-            source: rawText,
-        };
-    }
-
-    return null;
-}
-
 export function createCloudflareProvider() {
     return {
         async getEmailAddress() {
@@ -197,35 +150,27 @@ export function createCloudflareProvider() {
             ensureApiBaseUrlConfigured();
             ensureApiKeyConfigured();
 
-            const normalizedEmail = normalizeEmail(email);
-            const previousCode = lastVerificationCodeByEmail.get(normalizedEmail) ?? "";
-
             for (let attempt = 1; attempt <= CLOUDFLARE_POLL_ATTEMPTS; attempt += 1) {
                 const latestMail = await fetchLatestMailbox(email);
-                const latestMatch = findVerificationCode(latestMail);
-                if (latestMatch?.verificationCode && latestMatch.verificationCode !== previousCode) {
-                    lastVerificationCodeByEmail.set(normalizedEmail, latestMatch.verificationCode);
-                    console.log(`cloudflareOtpCode: ${latestMatch.verificationCode}`);
-                    return latestMatch.verificationCode;
-                }
-
-                if (latestMatch?.verificationCode && latestMatch.verificationCode === previousCode) {
-                    if (attempt < CLOUDFLARE_POLL_ATTEMPTS) {
-                        await new Promise((resolve) => setTimeout(resolve, CLOUDFLARE_POLL_INTERVAL_MS));
-                    }
-                    continue;
-                }
-
                 const mailboxList = await fetchMailboxList(email);
-                for (const mail of mailboxList.emails ?? []) {
-                    const match = findVerificationCode(mail);
-                    if (!match?.verificationCode || match.verificationCode === previousCode) {
-                        continue;
-                    }
-
-                    lastVerificationCodeByEmail.set(normalizedEmail, match.verificationCode);
-                    console.log(`cloudflareOtpCode: ${match.verificationCode}`);
-                    return match.verificationCode;
+                const candidates = [
+                    ...(latestMail ? [latestMail] : []),
+                    ...(mailboxList.emails ?? []),
+                ].map((mail) => ({
+                    ...mail,
+                    id: mail.id == null ? String(mail.message_id ?? "") : String(mail.id),
+                    sender: String(mail.from_email ?? ""),
+                    recipient: String(mail.mailbox ?? ""),
+                    subject: String(mail.subject ?? ""),
+                    content: String(mail.raw_text ?? ""),
+                    timestamp: Number(mail.received_at ?? 0),
+                }));
+                const matchedMail = findLatestVerificationMail(candidates, {
+                    targetEmail: buildMailbox(email),
+                });
+                if (matchedMail?.verificationCode) {
+                    console.log(`cloudflareOtpCode: ${matchedMail.verificationCode}`);
+                    return matchedMail.verificationCode;
                 }
 
                 if (attempt < CLOUDFLARE_POLL_ATTEMPTS) {

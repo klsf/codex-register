@@ -4,6 +4,7 @@ import path from "node:path";
 import {appConfig} from "../config.js";
 import {generateEmailName} from "./generate-email-name.js";
 import {Agent, ProxyAgent} from "undici";
+import {findLatestVerificationMail} from "./verification-matcher.js";
 
 
 const PROXIEDMAIL_BASE_URL = "https://proxiedmail.com/api/v1";
@@ -17,7 +18,6 @@ const PROXIEDMAIL_POLL_INTERVAL_MS = 5000;
 const PROXIEDMAIL_ACCOUNT_FILE = path.resolve(process.cwd(), "proxiedmail-account.json");
 
 const bindingCache = new Map();
-const lastVerificationCodeByEmail = new Map();
 let currentApiToken = PROXIEDMAIL_API_TOKEN;
 let currentRealAddress = PROXIEDMAIL_REAL_ADDRESS;
 let accountStateLoaded = false;
@@ -131,39 +131,6 @@ function decodeHtmlEntities(text) {
         .replace(/&quot;/gi, '"')
         .replace(/&#39;/gi, "'")
         .replace(/&amp;/gi, "&");
-}
-
-function normalizeContentForCodeSearch(text) {
-    return decodeHtmlEntities(text)
-        .replace(/<style[\s\S]*?<\/style>/gi, " ")
-        .replace(/<script[\s\S]*?<\/script>/gi, " ")
-        .replace(/<br\s*\/?>/gi, " ")
-        .replace(/<\/p>/gi, " ")
-        .replace(/<[^>]+>/g, " ")
-        .replace(/[\u200B-\u200D\uFEFF]/g, "")
-        .replace(/\s+/g, " ")
-        .trim();
-}
-
-function extractVerificationCode(text) {
-    const raw = String(text ?? "");
-    if (!raw) {
-        return "";
-    }
-
-    const directMatch = raw.match(/\b(\d{6})\b/);
-    if (directMatch?.[1]) {
-        return directMatch[1];
-    }
-
-    const normalized = normalizeContentForCodeSearch(raw);
-    const normalizedMatch = normalized.match(/(?:^|[^\d])((?:\d[\s-]*){6})(?:[^\d]|$)/);
-    if (!normalizedMatch?.[1]) {
-        return "";
-    }
-
-    const digitsOnly = normalizedMatch[1].replace(/\D/g, "");
-    return digitsOnly.length === 6 ? digitsOnly : "";
 }
 
 function buildSignupUsername() {
@@ -360,8 +327,6 @@ async function getLatestVerificationMessage(email, options = {}) {
     const binding = await resolveProxyBindingByAddress(email);
     const links = await listReceivedEmailLinks(binding.id);
     const detailed = [];
-    const previousCode = options.previousCode ?? "";
-
     for (const item of links) {
         const attributes = item?.attributes ?? {};
         const linkPath = String(attributes.link ?? "");
@@ -373,26 +338,20 @@ async function getLatestVerificationMessage(email, options = {}) {
         }
 
         const detail = await getReceivedEmail(receivedEmailId);
-        const code =
-            extractVerificationCode(detail.subject) ||
-            extractVerificationCode(detail.bodyPlain) ||
-            extractVerificationCode(detail.bodyHtml);
-
         detailed.push({
             ...detail,
             createdAtMs: parseCreatedAtMs(detail.createdAt),
-            verificationCode: code,
+            recipient: detail.recipientEmail,
+            sender: detail.senderEmail,
+            content: detail.bodyPlain,
+            timestamp: parseCreatedAtMs(detail.createdAt),
+            extraTexts: [detail.bodyHtml],
         });
     }
 
-    detailed.sort((a, b) => b.createdAtMs - a.createdAtMs);
-    return (
-        detailed.find(
-            (item) =>
-                item.verificationCode &&
-                item.verificationCode !== previousCode,
-        ) ?? null
-    );
+    return findLatestVerificationMail(detailed, {
+        targetEmail: email,
+    });
 }
 
 export function createProxiedMailProvider() {
@@ -405,18 +364,13 @@ export function createProxiedMailProvider() {
         },
         async getEmailVerificationCode(email) {
             await loadPersistedAccountState();
-            const normalizedEmail = String(email).toLowerCase();
-            const previousCode = lastVerificationCodeByEmail.get(normalizedEmail) ?? "";
             for (let attempt = 1; attempt <= PROXIEDMAIL_POLL_ATTEMPTS; attempt += 1) {
                 console.log(
                     `pollProxiedMailOtp: attempt=${attempt}/${PROXIEDMAIL_POLL_ATTEMPTS} targetEmail=${email}`,
                 );
 
-                const message = await getLatestVerificationMessage(email, {
-                    previousCode,
-                });
+                const message = await getLatestVerificationMessage(email);
                 if (message?.verificationCode) {
-                    lastVerificationCodeByEmail.set(normalizedEmail, message.verificationCode);
                     console.log(`proxiedmailOtpCode: ${message.verificationCode}`);
                     return message.verificationCode;
                 }
@@ -431,23 +385,5 @@ export function createProxiedMailProvider() {
             throw new Error(`ProxiedMail 中未找到验证码: targetEmail=${email}`);
         },
     };
-}
-
-async function main() {
-    const mode = process.argv[2] ?? "create";
-    const email = process.argv[3] ?? "";
-    const provider = createProxiedMailProvider();
-
-    if (mode === "code") {
-        if (!email) {
-            throw new Error("运行 proxiedmail.js 的 code 模式需要传入目标邮箱参数");
-        }
-        const code = await provider.getEmailVerificationCode(email);
-        console.log(`verificationCode=${code}`);
-        return;
-    }
-
-    const proxyAddress = await provider.getEmailAddress();
-    console.log(`proxyAddress=${proxyAddress}`);
 }
 

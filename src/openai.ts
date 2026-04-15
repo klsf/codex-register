@@ -3,9 +3,9 @@ import {createInterface} from "node:readline/promises";
 import net from "node:net";
 import {stdin as input, stdout as output} from "node:process";
 import tls from "node:tls";
-import {fileURLToPath, URLSearchParams} from "node:url";
+import {URLSearchParams} from "node:url";
 import path from "node:path";
-import {Agent, ProxyAgent, setGlobalDispatcher} from "undici";
+import {Agent, ProxyAgent, setGlobalDispatcher, type Dispatcher} from "undici";
 import {SocksClient} from "socks";
 import makeFetchCookie from "fetch-cookie";
 import {CookieJar} from "tough-cookie";
@@ -43,7 +43,7 @@ function shouldAllowInsecureTLS(): boolean {
     return DEFAULT_INSECURE_TLS;
 }
 
-function createDispatcher(proxyUrl: string, allowInsecureTLS: boolean): unknown {
+function createDispatcher(proxyUrl: string, allowInsecureTLS: boolean): Dispatcher {
     if (!proxyUrl) {
         return new Agent({
             connect: {
@@ -63,12 +63,14 @@ function createDispatcher(proxyUrl: string, allowInsecureTLS: boolean): unknown 
     }
 
     if (isSocksProtocol(parsedProxyUrl.protocol)) {
+        const connect = ((options, callback) => {
+            void createSocksSocket(parsedProxyUrl, options as unknown as Record<string, unknown>, allowInsecureTLS)
+                .then((socket) => callback(null, socket))
+                .catch((error) => callback(error instanceof Error ? error : new Error(String(error)), null));
+        }) as NonNullable<ConstructorParameters<typeof Agent>[0]>["connect"];
+
         return new Agent({
-            connect: (options: Record<string, unknown>, callback: (error: Error | null, socket?: net.Socket) => void) => {
-                void createSocksSocket(parsedProxyUrl, options, allowInsecureTLS)
-                    .then((socket) => callback(null, socket))
-                    .catch((error) => callback(error instanceof Error ? error : new Error(String(error))));
-            },
+            connect,
         });
     }
 

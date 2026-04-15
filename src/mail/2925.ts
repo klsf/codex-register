@@ -2,10 +2,13 @@
 import {createHash, randomBytes} from "node:crypto";
 import {mkdir, readFile, writeFile} from "node:fs/promises";
 import path from "node:path";
-import {fileURLToPath} from "node:url";
 import {appConfig} from "../config.js";
 import {DEFAULT_USER_AGENT} from "../constants.js";
 import {generateEmailName} from "./generate-email-name.js";
+import {
+    findLatestVerificationMail as findLatestVerificationMailByFields,
+    normalizeMailbox,
+} from "./verification-matcher.js";
 
 const PROVIDER_DEVICE_UID = "28960a33-9af0-4ea7-9e1c-bccc5b7cc564";
 const PROVIDER_POLL_ATTEMPTS = 36;
@@ -23,7 +26,6 @@ const SESSION_CACHE_FILE = path.join(SESSION_CACHE_DIR, "2925-account.json");
 const MOBILE_USER_AGENT =
     "Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1 Edg/146.0.0.0";
 let memorySession = null;
-const lastVerificationCodeByEmail = new Map();
 
 function getProviderMailbox() {
     if (!appConfig["2925EmailAddress"]) {
@@ -347,52 +349,23 @@ function normalizeEmail(value) {
     return String(value ?? "").trim().toLowerCase();
 }
 
-export function extractVerificationCode(text) {
-    if (!text) {
-        return "";
-    }
-    const match = String(text).match(/\b(\d{6})\b/);
-    return match?.[1] ?? "";
-}
-
-export function findLatestVerificationMail(mails, options = {}) {
+function findLatestVerificationMail(mails, options = {}) {
     const matcher = options.matcher ?? /(OpenAI|ChatGPT).*(code)|code.*(OpenAI|ChatGPT)/i;
-    const targetEmail = normalizeEmail(options.targetEmail ?? options.email ?? options.mailbox);
-    const lastVerificationCode = String(options.lastVerificationCode ?? "");
-    const sorted = [...mails].sort((a, b) => b.createTime - a.createTime);
-
-    for (const mail of sorted) {
-        if (targetEmail) {
-            const matchedRecipient = mail.toAddress.some(
-                (address) => normalizeEmail(address) === targetEmail,
-            );
-            if (!matchedRecipient) {
-                continue;
-            }
-        }
-
-        const haystack = `${mail.subject}\n${mail.bodyContent}\n${mail.sender}`;
-        if (!matcher.test(haystack)) {
-            continue;
-        }
-        const code =
-            extractVerificationCode(mail.subject) ||
-            extractVerificationCode(mail.bodyContent);
-        if (code) {
-            if (lastVerificationCode && code === lastVerificationCode) {
-                continue;
-            }
-            return {
-                ...mail,
-                verificationCode: code,
-            };
-        }
-    }
-
-    return null;
+    return findLatestVerificationMailByFields(
+        mails.map((mail) => ({
+            ...mail,
+            recipient: mail.toAddress,
+            content: mail.bodyContent,
+            timestamp: mail.createTime,
+        })),
+        {
+            targetEmail: options.targetEmail ?? options.email ?? options.mailbox,
+            candidateMatcher: (mail) => matcher.test(`${mail.subject}\n${mail.content}\n${mail.sender}`),
+        },
+    );
 }
 
-export async function fetchMailReadContent(options) {
+async function fetchMailReadContent(options) {
     if (!options?.messageId) {
         throw new Error("messageId 不能为空");
     }
@@ -426,7 +399,7 @@ export async function fetchMailReadContent(options) {
     };
 }
 
-export async function fetchMailList(options) {
+async function fetchMailList(options) {
     if (!options?.mailbox) {
         throw new Error("mailbox 不能为空");
     }
@@ -467,7 +440,7 @@ export async function fetchMailList(options) {
     };
 }
 
-export async function moveMailsToDeleted(options) {
+async function moveMailsToDeleted(options) {
     const mailList = options.mailList ?? (await fetchMailList(options));
     const messageIds = Array.isArray(options.messageIds)
         ? options.messageIds.filter((value) => Boolean(value))
@@ -515,64 +488,57 @@ export async function moveMailsToDeleted(options) {
     };
 }
 
-export async function fetchLatestVerificationCode(options) {
+async function fetchLatestVerificationCode(options) {
     const mailList = await fetchMailList(options);
     const matcher = options.matcher ?? /(OpenAI|ChatGPT).*(code)|code.*(OpenAI|ChatGPT)/i;
-    const targetEmail = normalizeEmail(options.targetEmail ?? options.email ?? options.mailbox);
-    const lastVerificationCode = String(options.lastVerificationCode ?? "");
     const sorted = [...mailList.list].sort((a, b) => b.createTime - a.createTime);
-    let latestMail = null;
+    let latestMail = findLatestVerificationMail(sorted, {
+        targetEmail: options.targetEmail ?? options.email ?? options.mailbox,
+        matcher,
+    });
 
-    for (const mail of sorted) {
-        if (targetEmail) {
-            const matchedRecipient = mail.toAddress.some(
-                (address) => normalizeEmail(address) === targetEmail,
-            );
-            if (!matchedRecipient) {
+    if (!latestMail) {
+        const normalizedTarget = normalizeMailbox(options.targetEmail ?? options.email ?? options.mailbox);
+        for (const mail of sorted) {
+            if (normalizedTarget) {
+                const matchedRecipient = mail.toAddress.some(
+                    (address) => normalizeMailbox(address) === normalizedTarget,
+                );
+                if (!matchedRecipient) {
+                    continue;
+                }
+            }
+
+            const summaryHaystack = `${mail.subject}\n${mail.bodyContent}\n${mail.sender}`;
+            if (matcher.test(summaryHaystack)) {
                 continue;
             }
-        }
 
-        const summaryHaystack = `${mail.subject}\n${mail.bodyContent}\n${mail.sender}`;
-        const summaryCode =
-            extractVerificationCode(mail.subject) ||
-            extractVerificationCode(mail.bodyContent);
-        if (summaryCode && matcher.test(summaryHaystack)) {
-            if (!lastVerificationCode || summaryCode !== lastVerificationCode) {
-                latestMail = {
+            const detail = await fetchMailReadContent({
+                ...options,
+                messageId: mail.messageId,
+                folder: mail.folder || "Inbox",
+            });
+            const matchedDetail = findLatestVerificationMail(
+                [{
                     ...mail,
-                    verificationCode: summaryCode,
-                };
+                    subject: detail.subject || mail.subject,
+                    bodyContent: detail.bodyContent || mail.bodyContent,
+                    sender: detail.sender || mail.sender,
+                    toAddress: detail.toAddress?.length ? detail.toAddress : mail.toAddress,
+                    createTime: mail.createTime,
+                    detailRaw: detail.raw,
+                }],
+                {
+                    targetEmail: options.targetEmail ?? options.email ?? options.mailbox,
+                    matcher,
+                },
+            );
+            if (matchedDetail) {
+                latestMail = matchedDetail;
                 break;
             }
         }
-
-        const detail = await fetchMailReadContent({
-            ...options,
-            messageId: mail.messageId,
-            folder: mail.folder || "Inbox",
-        });
-        const detailHaystack = `${detail.subject}\n${detail.bodyContent}\n${detail.sender}`;
-        const detailCode =
-            extractVerificationCode(detail.subject) ||
-            extractVerificationCode(detail.bodyContent);
-        if (!detailCode || !matcher.test(detailHaystack)) {
-            continue;
-        }
-        if (lastVerificationCode && detailCode === lastVerificationCode) {
-            continue;
-        }
-
-        latestMail = {
-            ...mail,
-            subject: detail.subject || mail.subject,
-            bodyContent: detail.bodyContent || mail.bodyContent,
-            sender: detail.sender || mail.sender,
-            toAddress: detail.toAddress?.length ? detail.toAddress : mail.toAddress,
-            verificationCode: detailCode,
-            detailRaw: detail.raw,
-        };
-        break;
     }
 
     const deleteResult = latestMail
@@ -598,8 +564,6 @@ export async function fetchLatestVerificationCode(options) {
 
 async function fetchLatestVerificationCodeWithSession(targetEmail) {
     let session = await get2925Session(false);
-    const normalizedEmail = normalizeEmail(targetEmail);
-    const lastVerificationCode = lastVerificationCodeByEmail.get(normalizedEmail) ?? "";
 
     for (let attempt = 1; attempt <= 2; attempt += 1) {
         try {
@@ -612,11 +576,7 @@ async function fetchLatestVerificationCodeWithSession(targetEmail) {
                 nickname: session.nickname,
                 deviceUid: session.deviceUid,
                 cookie: session.cookie,
-                lastVerificationCode,
             });
-            if (result.code) {
-                lastVerificationCodeByEmail.set(normalizedEmail, result.code);
-            }
             return result;
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -673,33 +633,5 @@ export function create2925Provider() {
             throw new Error(`2925邮箱中未找到验证码: targetEmail=${email}`);
         },
     };
-}
-
-async function main() {
-    const mode = process.argv[2] ?? "list";
-    const targetEmail = process.argv[3] ?? "";
-
-    if (!targetEmail && mode === "code") {
-        throw new Error("运行 2925.js 的 code 模式需要传入目标邮箱参数");
-    }
-
-    if (mode === "code") {
-        const provider = create2925Provider();
-        const code = await provider.getEmailVerificationCode(targetEmail);
-        console.log(`verificationCode=${code}`);
-        return;
-    }
-
-    const session = await get2925Session(false);
-    const result = await fetchMailList({
-        mailbox: session.mailbox,
-        bearerToken: session.bearerToken,
-        refreshToken: session.refreshToken,
-        uid: session.uid,
-        nickname: session.nickname,
-        deviceUid: session.deviceUid,
-        cookie: session.cookie,
-    });
-    console.log(JSON.stringify(result, null, 2));
 }
 

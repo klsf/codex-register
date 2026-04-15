@@ -1,33 +1,5 @@
 # 自建邮箱 Worker 手动部署教程
 
-这个文档改为 `D1` 方案。
-
-目标是：
-
-- 不用 `R2`
-- 不用本地构建
-- 不用上传整个项目
-- 直接在 Cloudflare 后台粘贴单文件 Worker
-- 一封邮件只存 `D1` 里一行
-
-直接使用这份文件：
-
-- [`MAIL_WORKER_UPLOAD.js`](/H:/go/codex-register/MAIL_WORKER_UPLOAD.js)
-
-## 这份 Worker 做什么
-
-部署完成后，它会：
-
-- 接收 Cloudflare Email Routing 转发过来的邮件
-- 每封邮件往 D1 里插入 1 行
-- 提供按邮箱查询最新邮件和邮件列表的 HTTP 接口
-
-项目里的 `cloudflare` provider 只负责：
-
-- 自动生成随机邮箱地址
-- 调你的 Worker 接口轮询邮件
-- 从邮件内容里提取验证码
-
 ## 前置条件
 
 你需要准备好：
@@ -35,8 +7,6 @@
 - 一个 Cloudflare 账号
 - 一个已接入 Cloudflare 的域名
 - 一个 D1 数据库
-
-这个方案不要求本机安装 `wrangler`。
 
 ## 第一步：创建 D1 数据库
 
@@ -95,7 +65,7 @@ mail-d1-api
 
 创建完成后，进入 Worker 的代码编辑页。
 
-把默认 Hello World 代码全部删掉，再把 [`MAIL_WORKER_UPLOAD.js`](/H:/go/codex-register/MAIL_WORKER_UPLOAD.js) 的全部内容粘进去。
+把默认 Hello World 代码全部删掉，再把 [`MAIL_WORKER_UPLOAD.js`](MAIL_WORKER_UPLOAD.js) 的全部内容粘进去。
 
 这份文件是纯 JS 单文件，不需要构建。
 
@@ -248,9 +218,3 @@ curl -X DELETE -H "x-api-key: your_api_key" "https://mail-d1-api.xxx.workers.dev
 当前脚本会先尝试从原始 MIME 邮件里解析 `text/plain` 或 `text/html` 正文，再写入 `raw_text`。
 
 如果解析失败，至少也会把原始 MIME 文本写进去，不会像之前那样直接是空字符串。
-
-### 4. 为什么不用 KV
-
-因为你前面担心 `KV` 的写入额度太少。
-
-这个版本改成 `D1` 后，一天写入空间会宽松很多，更适合批量验证码场景。

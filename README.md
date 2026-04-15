@@ -1,7 +1,7 @@
 # <p align="center">codex-register</p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-v1.0.3-111827">
+  <img alt="Version" src="https://img.shields.io/badge/version-v1.0.4-111827">
   <img alt="GitHub Repo stars" src="https://img.shields.io/github/stars/klsf/codex-register?style=social">
 </p>
 
@@ -231,6 +231,8 @@ npm run check -- --proxy http://127.0.0.1:7890 --table
 }
 ```
 
+临时 token 获取教程见：[GMAIL_OAUTH_PLAYGROUND.md](./GMAIL_OAUTH_PLAYGROUND.md)
+
 ### 3）2925
 
 ```json
@@ -253,7 +255,7 @@ npm run check -- --proxy http://127.0.0.1:7890 --table
 ```
 
 适合自有域名的邮箱注册。
-Cloudflare Worker 部署说明见：`MAIL_WORKER_DEPLOY.md`
+Cloudflare Worker 部署说明见：[MAIL_WORKER_DEPLOY.md](./MAIL_WORKER_DEPLOY.md)
 
 ---
 
@@ -281,4 +283,3 @@ Cloudflare Worker 部署说明见：`MAIL_WORKER_DEPLOY.md`
     - Cloudflare 邮件 Worker 地址
 - `cloudflareApiKey`
     - Cloudflare 邮件 Worker 的 `x-api-key`
-

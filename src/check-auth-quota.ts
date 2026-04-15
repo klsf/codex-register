@@ -1,7 +1,7 @@
 import {cpus} from "node:os";
 import {mkdir, readdir, readFile, rename, writeFile} from "node:fs/promises";
 import path from "node:path";
-import {fetch as undiciFetch, Agent, ProxyAgent} from "undici";
+import {fetch as undiciFetch, Agent, ProxyAgent, type Dispatcher, type RequestInit as UndiciRequestInit} from "undici";
 import {appConfig} from "./config.js";
 import {AUTH_OAUTH_TOKEN_URLS, DEFAULT_CLIENT_ID, DEFAULT_USER_AGENT} from "./constants.js";
 
@@ -142,7 +142,7 @@ function getProxyUrl(): string {
     return readFlagValue("--proxy").trim() || appConfig.defaultProxyUrl;
 }
 
-function buildDispatcher(): unknown {
+function buildDispatcher(): Dispatcher {
     const proxyUrl = getProxyUrl();
     return proxyUrl
         ? new ProxyAgent({
@@ -230,7 +230,7 @@ async function sendUsageProbe(accessToken: string, accountId: string): Promise<P
             },
             signal: controller.signal,
             dispatcher,
-        } as RequestInit & { dispatcher: unknown });
+        } satisfies UndiciRequestInit);
         return {
             status: response.status,
             body: await response.text(),
@@ -314,7 +314,7 @@ async function refreshAccessToken(
                 }),
                 signal: controller.signal,
                 dispatcher: buildDispatcher(),
-            } as RequestInit & { dispatcher: unknown });
+            } satisfies UndiciRequestInit);
 
             const rawBody = await response.text();
             if (!response.ok) {

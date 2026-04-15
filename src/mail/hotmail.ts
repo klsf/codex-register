@@ -2,6 +2,7 @@
 import {readFile, readdir, writeFile} from "node:fs/promises";
 import path from "node:path";
 import {generateEmailName} from "./generate-email-name.js";
+import {findLatestVerificationMail} from "./verification-matcher.js";
 
 const HOTMAIL_TOKEN_DIR = path.resolve(process.cwd(), "hotmail");
 const HOTMAIL_GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0";
@@ -11,33 +12,10 @@ const HOTMAIL_POLL_INTERVAL_MS = 5000;
 const HOTMAIL_MESSAGE_FETCH_LIMIT = 10;
 const HOTMAIL_FOLDER_IDS = ["inbox", "junkemail"];
 const aliasAccountMap = new Map();
-const lastVerificationCodeByEmail = new Map();
 let accountCache = null;
 
 function normalizeEmail(value) {
     return String(value ?? "").trim().toLowerCase();
-}
-
-function extractVerificationCode(text) {
-    const raw = String(text ?? "");
-    if (!raw) {
-        return "";
-    }
-
-    const directMatch = raw.match(/\b(\d{6})\b/);
-    if (directMatch?.[1]) {
-        return directMatch[1];
-    }
-
-    const compactMatch = raw
-        .replace(/<[^>]+>/g, " ")
-        .match(/(?:^|[^\d])((?:\d[\s-]*){6})(?:[^\d]|$)/);
-    if (!compactMatch?.[1]) {
-        return "";
-    }
-
-    const digitsOnly = compactMatch[1].replace(/\D/g, "");
-    return digitsOnly.length === 6 ? digitsOnly : "";
 }
 
 function decodeJwtPayload(token) {
@@ -280,26 +258,6 @@ function normalizeMessage(message, folderId) {
     };
 }
 
-function messageMatchesTarget(message, targetEmail) {
-    const normalizedTarget = normalizeEmail(targetEmail);
-    if (!normalizedTarget) {
-        return false;
-    }
-    return message.toRecipients.includes(normalizedTarget);
-}
-
-function formatMessageDebug(message) {
-    return JSON.stringify({
-        id: message?.id ?? "",
-        folderId: message?.folderId ?? "",
-        receivedDateTime: message?.receivedDateTime ?? "",
-        from: message?.from ?? "",
-        toRecipients: Array.isArray(message?.toRecipients) ? message.toRecipients : [],
-        subject: message?.subject ?? "",
-        bodyPreview: String(message?.bodyPreview ?? "").slice(0, 160),
-    });
-}
-
 async function listFolderMessages(account, folderId) {
     const url = new URL(`${HOTMAIL_GRAPH_BASE_URL}/me/mailFolders/${encodeURIComponent(folderId)}/messages`);
     url.searchParams.set("$top", String(HOTMAIL_MESSAGE_FETCH_LIMIT));
@@ -312,7 +270,7 @@ async function listFolderMessages(account, folderId) {
         : [];
 }
 
-async function getLatestVerificationMessage(targetEmail, account, previousCode = "") {
+async function getLatestVerificationMessage(targetEmail, account) {
     const messages = [];
 
     for (const folderId of HOTMAIL_FOLDER_IDS) {
@@ -323,31 +281,18 @@ async function getLatestVerificationMessage(targetEmail, account, previousCode =
     messages.sort((a, b) => b.receivedAtMs - a.receivedAtMs);
 
     console.log(`hotmailMessagesFetched: targetEmail=${targetEmail} mailbox=${account.loginHint} count=${messages.length}`);
-
-    for (const message of messages) {
-        if (!messageMatchesTarget(message, targetEmail)) {
-            continue;
-        }
-
-        const verificationCode =
-            extractVerificationCode(message.subject) ||
-            extractVerificationCode(message.bodyPreview) ||
-            extractVerificationCode(message.bodyContent);
-
-        if (!verificationCode) {
-            continue;
-        }
-        if (previousCode && verificationCode === previousCode) {
-            continue;
-        }
-
-        return {
+    return findLatestVerificationMail(
+        messages.map((message) => ({
             ...message,
-            verificationCode,
-        };
-    }
-
-    return null;
+            recipient: message.toRecipients,
+            content: message.bodyContent,
+            timestamp: message.receivedAtMs,
+            extraTexts: [message.bodyPreview],
+        })),
+        {
+            targetEmail,
+        },
+    );
 }
 
 async function resolveAccountForEmail(email) {
@@ -384,18 +329,15 @@ export function createHotmailProvider() {
             return aliasEmail;
         },
         async getEmailVerificationCode(email) {
-            const normalizedEmail = normalizeEmail(email);
             const account = await resolveAccountForEmail(email);
-            const previousCode = lastVerificationCodeByEmail.get(normalizedEmail) ?? "";
 
             for (let attempt = 1; attempt <= HOTMAIL_POLL_ATTEMPTS; attempt += 1) {
                 console.log(
                     `pollHotmailOtp: attempt=${attempt}/${HOTMAIL_POLL_ATTEMPTS} targetEmail=${email} mailbox=${account.loginHint}`,
                 );
 
-                const message = await getLatestVerificationMessage(email, account, previousCode);
+                const message = await getLatestVerificationMessage(email, account);
                 if (message?.verificationCode) {
-                    lastVerificationCodeByEmail.set(normalizedEmail, message.verificationCode);
                     console.log(`hotmailOtpCode: ${message.verificationCode}`);
                     console.log(`hotmailOtpFolder: ${message.folderId}`);
                     return message.verificationCode;
