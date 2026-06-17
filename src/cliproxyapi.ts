@@ -29,61 +29,11 @@ function createManagementHeaders(extraHeaders: Record<string, string> = {}): Rec
     };
 }
 
-export interface CLIProxyAuthFileItem {
-    name: string;
-    type?: string;
-    disabled?: boolean;
-    [key: string]: unknown;
-}
-
 export function shouldAutoUploadAuthToCLIProxyAPI(): boolean {
     return appConfig.cliproxyApiAutoUploadAuth;
 }
 
-export async function listAuthFilesFromCLIProxyAPI(): Promise<CLIProxyAuthFileItem[]> {
-    const {baseUrl} = getCLIProxyAPIConfig();
-    const response = await fetch(`${baseUrl}/v0/management/auth-files`, {
-        method: "GET",
-        headers: createManagementHeaders(),
-    });
-    const rawBody = await response.text();
-    if (!response.ok) {
-        throw new Error(`CLIProxyAPI 获取 auth 列表失败: ${response.status} body=${rawBody}`);
-    }
-
-    const payload = JSON.parse(rawBody) as { files?: Array<Record<string, unknown>> };
-    return Array.isArray(payload?.files)
-        ? payload.files
-            .map((item) => ({
-                ...item,
-                name: String(item?.name ?? "").trim(),
-                type: typeof item?.type === "string" ? item.type.trim() : undefined,
-            }))
-            .filter((item) => item.name)
-        : [];
-}
-
-export async function downloadAuthFileJsonObjectFromCLIProxyAPI(name: string): Promise<Record<string, unknown>> {
-    const {baseUrl} = getCLIProxyAPIConfig();
-    const url = new URL(`${baseUrl}/v0/management/auth-files/download`);
-    url.searchParams.set("name", name);
-    const response = await fetch(url, {
-        method: "GET",
-        headers: createManagementHeaders(),
-    });
-    const rawBody = await response.text();
-    if (!response.ok) {
-        throw new Error(`CLIProxyAPI 下载 auth 失败: ${response.status} name=${name} body=${rawBody}`);
-    }
-
-    const payload = JSON.parse(rawBody) as Record<string, unknown>;
-    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
-        throw new Error(`CLIProxyAPI auth 内容不是合法 JSON 对象: ${name}`);
-    }
-    return payload;
-}
-
-export async function saveAuthFileJsonObjectToCLIProxyAPI(
+async function saveAuthFileJsonObjectToCLIProxyAPI(
     fileName: string,
     record: Record<string, unknown>,
 ): Promise<void> {
@@ -106,46 +56,6 @@ export async function saveAuthFileJsonObjectToCLIProxyAPI(
     const rawBody = await response.text();
     if (!response.ok) {
         throw new Error(`CLIProxyAPI 上传 auth 失败: ${response.status} body=${rawBody}`);
-    }
-}
-
-export async function deleteAuthFileFromCLIProxyAPI(fileName: string): Promise<void> {
-    const {baseUrl} = getCLIProxyAPIConfig();
-    const response = await fetch(`${baseUrl}/v0/management/auth-files`, {
-        method: "DELETE",
-        headers: createManagementHeaders({
-            "Content-Type": "application/json",
-        }),
-        body: JSON.stringify({
-            names: [fileName],
-        }),
-    });
-
-    const rawBody = await response.text();
-    if (!response.ok) {
-        throw new Error(`CLIProxyAPI 删除 auth 失败: ${response.status} body=${rawBody}`);
-    }
-}
-
-export async function setAuthFileDisabledStatusToCLIProxyAPI(
-    fileName: string,
-    disabled: boolean,
-): Promise<void> {
-    const {baseUrl} = getCLIProxyAPIConfig();
-    const response = await fetch(`${baseUrl}/v0/management/auth-files/status`, {
-        method: "PATCH",
-        headers: createManagementHeaders({
-            "Content-Type": "application/json",
-        }),
-        body: JSON.stringify({
-            name: fileName,
-            disabled,
-        }),
-    });
-
-    const rawBody = await response.text();
-    if (!response.ok) {
-        throw new Error(`CLIProxyAPI 更新 auth 状态失败: ${response.status} body=${rawBody}`);
     }
 }
 

@@ -2,6 +2,7 @@ import {randomBytes} from "node:crypto";
 import {readFile} from "node:fs/promises";
 import path from "node:path";
 import vm from "node:vm";
+import {hasFlag} from "./cli-args.js";
 import {DEFAULT_USER_AGENT} from "./constants.js";
 import {defaultDeviceProfile, getDeviceClientHints, type DeviceProfile} from "./device-profile.js";
 import {fetchSentinelTokenFromBrowser} from "./sentinel-browser.js";
@@ -198,7 +199,7 @@ export function defaultSentinelEnv(deviceProfile?: DeviceProfile): SentinelEnv {
 export async function fetchSentinelToken(
     options: FetchSentinelTokenOptions,
 ): Promise<string> {
-    const useBrowserSentinel = process.argv.includes("--st");
+    const useBrowserSentinel = hasFlag("--st");
     const profile = options.deviceProfile ?? defaultDeviceProfile();
     if (useBrowserSentinel) {
         try {

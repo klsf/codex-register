@@ -178,7 +178,7 @@ curl -X DELETE -H "x-api-key: your_api_key" "https://mail-d1-api.xxx.workers.dev
 
 ## 接入当前项目
 
-项目侧仍然在 [`config.json`](/H:/go/codex-register/config.json) 保持：
+项目侧在 `config.json` 保持：
 
 ```json
 {

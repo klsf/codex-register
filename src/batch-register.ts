@@ -1,22 +1,11 @@
 import {readFile} from "node:fs/promises";
 import path from "node:path";
+import {hasFlag, readArgValue, readPositiveIntArg} from "./cli-args.js";
 import {appConfig} from "./config.js";
 import {generateRandomDeviceProfile} from "./device-profile.js";
 import {OpenAIClient} from "./openai.js";
 
 const DEFAULT_DELAY_MS = 3000;
-
-function readArgValue(flag: string): string {
-    const index = process.argv.indexOf(flag);
-    if (index === -1) {
-        return "";
-    }
-    return process.argv[index + 1] ?? "";
-}
-
-function hasFlag(flag: string): boolean {
-    return process.argv.includes(flag);
-}
 
 async function loadEmails(): Promise<string[]> {
     const emailsArg = readArgValue("--emails").trim();
@@ -55,7 +44,6 @@ async function runForEmail(email: string): Promise<void> {
             email,
             password: appConfig.defaultPassword,
             deviceProfile,
-            manualMode: false,
             signupScreenHint: "sign",
         });
         const result = await client.authRegisterAndAuthorizeHTTP();
@@ -69,7 +57,6 @@ async function runForEmail(email: string): Promise<void> {
         email,
         password: appConfig.defaultPassword,
         deviceProfile,
-        manualMode: false,
     });
 
     await registerClient.authRegisterHTTP();
@@ -78,7 +65,6 @@ async function runForEmail(email: string): Promise<void> {
         email: registerClient.email,
         password: appConfig.defaultPassword,
         deviceProfile,
-        manualMode: false,
     });
     const result = await loginClient.authLoginHTTP();
     console.log(
@@ -88,7 +74,7 @@ async function runForEmail(email: string): Promise<void> {
 
 async function main(): Promise<void> {
     const emails = await loadEmails();
-    const delayMs = Number.parseInt(readArgValue("--delay-ms").trim(), 10) || DEFAULT_DELAY_MS;
+    const delayMs = readPositiveIntArg("--delay-ms") ?? DEFAULT_DELAY_MS;
     const stopOnError = hasFlag("--stop-on-error");
 
     if (!emails.length) {

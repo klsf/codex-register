@@ -1,7 +1,5 @@
 import {mkdir, writeFile} from "node:fs/promises";
-import {createInterface} from "node:readline/promises";
 import net from "node:net";
-import {stdin as input, stdout as output} from "node:process";
 import tls from "node:tls";
 import {URLSearchParams} from "node:url";
 import path from "node:path";
@@ -29,7 +27,6 @@ import {
 import {getEmailAddress, getEmailVerificationCode, MAILBOX_CONFIG} from "./mailbox.js";
 import {fetchSentinelToken} from "./sentinel.js";
 import { pkceCodeChallenge, randomUrlSafeString } from "./utils.js";
-import {ISMSActivationBroker} from "./sms/activation-broker.js";
 
 type FetchLike = typeof fetch;
 
@@ -193,9 +190,10 @@ export interface SavedAuthRecord {
     expired: string;
     id_token: string;
     last_refresh: string;
+    priority: 10;
     refresh_token: string;
     type: "codex";
-    websockets: false;
+    websockets: true;
 }
 
 export interface OpenAIClientOptions {
@@ -203,15 +201,12 @@ export interface OpenAIClientOptions {
     password: string;
     userAgent?: string;
     deviceProfile?: DeviceProfile;
-    manualMode?: boolean;
     signupScreenHint?: string;
-    smsBroker?: ISMSActivationBroker
 }
 
 export class OpenAIClient {
     email: string;
     readonly password: string;
-    readonly manualMode: boolean;
     readonly jar: CookieJar;
     readonly fetch: FetchLike;
     readonly userAgent: string;
@@ -221,10 +216,8 @@ export class OpenAIClient {
     state = "";
     codeVerifier = "";
     deviceID = "";
-    readonly smsBroker?: ISMSActivationBroker
 
     constructor(options: OpenAIClientOptions) {
-        this.smsBroker = options.smsBroker;
         this.email = options.email?.trim() ?? "";
         this.password = options.password;
         this.deviceProfile = options.deviceProfile
@@ -238,7 +231,6 @@ export class OpenAIClient {
             };
         this.userAgent = this.deviceProfile.userAgent;
         this.clientHints = getDeviceClientHints(this.deviceProfile);
-        this.manualMode = options.manualMode ?? !this.email;
         this.signupScreenHint = options.signupScreenHint?.trim() || "login_or_signup";
         this.jar = new CookieJar();
         setGlobalDispatcher(createDispatcher(resolveProxyUrl(), shouldAllowInsecureTLS()));
@@ -310,23 +302,7 @@ export class OpenAIClient {
         }
 
         if (continueURL === `${AUTH_BASE_URL}/add-phone`) {
-            this.logProgress('4-a', totalSteps, "进入短信验证流程，从接码平台获取号码");
-            if (!this.smsBroker) {
-                throw new Error("未配置 SMS provider，无法进行短信验证");
-            }
-            const lease = await this.smsBroker.getActivation();
-            this.logProgress('4-b', totalSteps, `发送短信验证码，phone=+${lease.phoneNumber}`);
-            const phoneNumber = `+${lease.phoneNumber}`
-            continueURL = await this.sendPhoneOtp(phoneNumber)
-              // sendPhoneOtp 过程中可能遇到 phone_max_usage_exceed 错误，需要手动标记失败并进行轮换
-              .catch(async (e) => {
-                  await this.smsBroker?.markAsFailed(true)
-                  throw e
-              });
-            this.logProgress('4-c', totalSteps, `等待短信验证码`);
-            const { code } = await lease.waitForVerificationCode();
-            this.logProgress('4-d', totalSteps, `提交短信验证，code=[${code}]`);
-            continueURL = await this.validatePhone(code);
+            throw new Error("当前账号触发 add-phone 绑手机流程，自动接码能力已移除，无法继续自动处理");
         }
 
         if (continueURL === `${AUTH_BASE_URL}/sign-in-with-chatgpt/codex/consent`) {
@@ -436,23 +412,7 @@ export class OpenAIClient {
         }
 
         if (continueURL === `${AUTH_BASE_URL}/add-phone`) {
-            if (!this.smsBroker) {
-                throw new Error("未配置 SMS provider，无法进行短信验证");
-            }
-            this.logProgress(step++, totalSteps++, "进入短信验证流程，从接码平台获取号码");
-            const lease = await this.smsBroker.getActivation();
-            this.logProgress(step++, totalSteps++, `发送短信验证码，phone=+${lease.phoneNumber}`);
-            const phoneNumber = `+${lease.phoneNumber}`
-            continueURL = await this.sendPhoneOtp(phoneNumber)
-              // sendPhoneOtp 过程中可能遇到 phone_max_usage_exceed 错误，需要手动标记失败并进行轮换
-              .catch(async (e) => {
-                  await this.smsBroker?.markAsFailed(true)
-                  throw e
-              });
-            this.logProgress(step++, totalSteps++, `等待短信验证码`);
-            const { code } = await lease.waitForVerificationCode();
-            this.logProgress(step++, totalSteps++, `提交短信验证，code=[${code}]`);
-            continueURL = await this.validatePhone(code);
+            throw new Error("当前账号触发 add-phone 绑手机流程，自动接码能力已移除，无法继续自动处理");
         }
 
         if (continueURL === `${AUTH_BASE_URL}/about-you`) {
@@ -637,39 +597,6 @@ export class OpenAIClient {
         return payload.continue_url;
     }
 
-    async validatePhone(code: string) {
-        const response = await this.postJSON(`${AUTH_BASE_URL}/api/accounts/phone-otp/validate`,
-          { code: code },
-          { referer: `${AUTH_BASE_URL}/phone-verification` },
-        );
-        if (!response.ok) {
-            throw new Error(
-              `PhoneOtpValidate请求失败: ${await this.formatErrorResponse(response)}`,
-            );
-        }
-        const payload = (await response.json()) as ContinueResponse;
-        return payload.continue_url;
-    }
-
-    async sendPhoneOtp(phoneNumber: string) {
-        const response = await this.postJSON(
-          `${AUTH_BASE_URL}/api/accounts/add-phone/send`,
-          {
-              phone_number: phoneNumber,
-          },
-          {
-              referer: `${AUTH_BASE_URL}/add-phone`,
-          },
-        );
-        if (!response.ok) {
-            throw new Error(
-              `SendPhoneOtp请求失败: ${await this.formatErrorResponse(response)}`,
-            );
-        }
-        const payload = (await response.json()) as ContinueResponse;
-        return payload.continue_url;
-    }
-
     async selectWorkspace(consentURL: string): Promise<string> {
         await this.fetch(consentURL, {
             method: "GET",
@@ -740,7 +667,7 @@ export class OpenAIClient {
             if (location) {
                 const nextURL = new URL(location, currentURL).toString();
                 if (nextURL.startsWith(`${AUTH_BASE_URL}/add-phone`)) {
-                    throw new Error("当前账号在登录后触发了 add-phone 绑手机流程，无法直接完成授权");
+                    throw new Error("当前账号触发 add-phone 绑手机流程，自动接码能力已移除，无法继续自动处理");
                 }
                 if (nextURL.startsWith(DEFAULT_REDIRECT_URI)) {
                     return this.extractAuthResult(nextURL);
@@ -750,7 +677,7 @@ export class OpenAIClient {
             }
 
             if (response.url.startsWith(`${AUTH_BASE_URL}/add-phone`)) {
-                throw new Error("当前账号在登录后触发了 add-phone 绑手机流程，无法直接完成授权");
+                throw new Error("当前账号触发 add-phone 绑手机流程，自动接码能力已移除，无法继续自动处理");
             }
 
             if (response.url.startsWith(DEFAULT_REDIRECT_URI)) {
@@ -797,10 +724,6 @@ export class OpenAIClient {
     }
 
     private async resolveEmailOtpCode(): Promise<string> {
-        if (this.manualMode) {
-            console.log(`manualEmailOtp: targetEmail=${this.email}`);
-            return this.promptEmailOtp();
-        }
         console.log(`autoEmailOtp: provider=${MAILBOX_CONFIG.provider} targetEmail=${this.email}`);
         return getEmailVerificationCode(this.email);
     }
@@ -810,19 +733,6 @@ export class OpenAIClient {
             return this.email;
         }
         return getEmailAddress();
-    }
-
-    private async promptEmailOtp(): Promise<string> {
-        const rl = createInterface({input, output});
-        try {
-            const code = (await rl.question("请输入邮箱验证码: ")).trim();
-            if (!/^\d{6}$/.test(code)) {
-                throw new Error(`邮箱验证码格式不正确: ${code}`);
-            }
-            return code;
-        } finally {
-            rl.close();
-        }
     }
 
     private async completeAboutYou(): Promise<string> {
@@ -1013,9 +923,10 @@ export class OpenAIClient {
             expired: new Date(exp * 1000).toISOString(),
             id_token: payload.id_token,
             last_refresh: new Date().toISOString(),
+            priority: 10,
             refresh_token: payload.refresh_token,
             type: "codex",
-            websockets: false,
+            websockets: true,
         };
     }
 
