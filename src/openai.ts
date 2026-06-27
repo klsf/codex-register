@@ -3,7 +3,7 @@ import net from "node:net";
 import tls from "node:tls";
 import {URLSearchParams} from "node:url";
 import path from "node:path";
-import {Agent, ProxyAgent, setGlobalDispatcher, type Dispatcher} from "undici";
+import {Agent, type Dispatcher, ProxyAgent, setGlobalDispatcher} from "undici";
 import {SocksClient} from "socks";
 import makeFetchCookie from "fetch-cookie";
 import {CookieJar} from "tough-cookie";
@@ -19,6 +19,7 @@ import {
     AUTH_PASSWORD_VERIFY_URL,
     AUTH_REGISTER_URL,
     AUTH_WORKSPACE_SELECT_URL,
+    CHATGPT_AUTH_CSRF_URL,
     CHATGPT_BASE_URL,
     DEFAULT_CLIENT_ID,
     DEFAULT_REDIRECT_URI,
@@ -26,7 +27,7 @@ import {
 } from "./constants.js";
 import {getEmailAddress, getEmailVerificationCode, MAILBOX_CONFIG} from "./mailbox.js";
 import {fetchSentinelToken} from "./sentinel.js";
-import { pkceCodeChallenge, randomUrlSafeString } from "./utils.js";
+import {pkceCodeChallenge, randomUrlSafeString} from "./utils.js";
 
 type FetchLike = typeof fetch;
 
@@ -302,7 +303,7 @@ export class OpenAIClient {
         }
 
         if (continueURL === `${AUTH_BASE_URL}/add-phone`) {
-            throw new Error("当前账号触发 add-phone 绑手机流程，自动接码能力已移除，无法继续自动处理");
+            throw new Error("当前账号触发 add-phone 绑手机流程，无法继续自动处理");
         }
 
         if (continueURL === `${AUTH_BASE_URL}/sign-in-with-chatgpt/codex/consent`) {
@@ -412,7 +413,7 @@ export class OpenAIClient {
         }
 
         if (continueURL === `${AUTH_BASE_URL}/add-phone`) {
-            throw new Error("当前账号触发 add-phone 绑手机流程，自动接码能力已移除，无法继续自动处理");
+            throw new Error("当前账号触发 add-phone 绑手机流程，无法继续自动处理");
         }
 
         if (continueURL === `${AUTH_BASE_URL}/about-you`) {
@@ -667,7 +668,7 @@ export class OpenAIClient {
             if (location) {
                 const nextURL = new URL(location, currentURL).toString();
                 if (nextURL.startsWith(`${AUTH_BASE_URL}/add-phone`)) {
-                    throw new Error("当前账号触发 add-phone 绑手机流程，自动接码能力已移除，无法继续自动处理");
+                    throw new Error("当前账号触发 add-phone 绑手机流程，无法继续自动处理");
                 }
                 if (nextURL.startsWith(DEFAULT_REDIRECT_URI)) {
                     return this.extractAuthResult(nextURL);
@@ -677,7 +678,7 @@ export class OpenAIClient {
             }
 
             if (response.url.startsWith(`${AUTH_BASE_URL}/add-phone`)) {
-                throw new Error("当前账号触发 add-phone 绑手机流程，自动接码能力已移除，无法继续自动处理");
+                throw new Error("当前账号触发 add-phone 绑手机流程，无法继续自动处理");
             }
 
             if (response.url.startsWith(DEFAULT_REDIRECT_URI)) {
@@ -1081,14 +1082,7 @@ export class OpenAIClient {
     }
 
     private async openSignupPage(email: string): Promise<void> {
-        const csrfCookie = await this.readCookie(
-            CHATGPT_BASE_URL,
-            "__Host-next-auth.csrf-token",
-        );
-        const csrfToken = decodeURIComponent(csrfCookie).split("|")[0] ?? "";
-        if (!csrfToken) {
-            throw new Error("未找到 __Host-next-auth.csrf-token，无法打开注册页");
-        }
+        const csrfToken = await this.nextAuthCSRFToken();
 
         const query = new URLSearchParams({
             prompt: "login",
@@ -1144,6 +1138,57 @@ export class OpenAIClient {
         if (!authorizeResp.ok) {
             throw new Error(`打开 OpenAI authorize 页失败: ${authorizeResp.status}`);
         }
+    }
+
+    private async nextAuthCSRFToken(): Promise<string> {
+        const fromCookie = await this.nextAuthCSRFTokenFromCookie();
+        if (fromCookie) {
+            return fromCookie;
+        }
+
+        const response = await this.fetch(CHATGPT_AUTH_CSRF_URL, {
+            method: "GET",
+            redirect: "follow",
+            headers: this.createBrowserHeaders({
+                accept: "application/json",
+                referer: `${CHATGPT_BASE_URL}/`,
+                "sec-fetch-dest": "empty",
+                "sec-fetch-mode": "cors",
+                "sec-fetch-site": "same-origin",
+            }),
+        });
+        if (response.ok) {
+            try {
+                const payload = (await response.json()) as {csrfToken?: string};
+                const token = payload.csrfToken?.trim() ?? "";
+                if (token) {
+                    return token;
+                }
+            } catch {
+                // 忽略 JSON 解析失败，回退到 cookie
+            }
+        }
+
+        const retryCookie = await this.nextAuthCSRFTokenFromCookie();
+        if (retryCookie) {
+            return retryCookie;
+        }
+
+        throw new Error("未找到 NextAuth csrfToken，无法打开注册页");
+    }
+
+    private async nextAuthCSRFTokenFromCookie(): Promise<string> {
+        for (const name of [
+            "__Host-next-auth.csrf-token",
+            "__Secure-next-auth.csrf-token",
+            "next-auth.csrf-token",
+        ]) {
+            const token = decodeCsrfCookie(await this.readCookie(CHATGPT_BASE_URL, name));
+            if (token) {
+                return token;
+            }
+        }
+        return "";
     }
 
     private async postJSON(
@@ -1281,6 +1326,20 @@ export class OpenAIClient {
         const code = "code" in cause ? String((cause as { code?: unknown }).code ?? "") : "";
         return code ? `${cause.message} (${code})` : cause.message;
     }
+}
+
+function decodeCsrfCookie(value: string): string {
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return "";
+    }
+    let decoded = trimmed;
+    try {
+        decoded = decodeURIComponent(trimmed);
+    } catch {
+        // 值不是合法的百分号编码时，保留原始值
+    }
+    return decoded.split("|")[0]?.trim() ?? "";
 }
 
 function isRetryableFetchError(error: unknown): boolean {

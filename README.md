@@ -64,6 +64,7 @@ npm run dev
 npm run dev -- --n 1
 npm run dev:sign
 npm run dev:at
+npm run dev:mode1
 ```
 
 构建后运行：
@@ -73,6 +74,7 @@ npm run start
 npm run start -- --n 1
 npm run start:sign
 npm run start:at
+npm run start:mode1
 ```
 
 参数说明：
@@ -80,9 +82,10 @@ npm run start:at
 - `--n <次数>`：自动模式最多跑多少轮。
 - `--sign`：直接注册并授权。
 - `--at`：只注册 ChatGPT 并保存 ChatGPT `accessToken` 到 `auth/at/`。
+- `--mode 1`：注册流程在进入基础资料页前停止。
 - `--st`：使用浏览器模式获取 Sentinel token，需要本机 Edge/Chrome 或设置 `SENTINEL_BROWSER_PATH`。
 
-npm 11 会把 `npm run dev -- --sign` 这类未知参数当作 npm config 并输出 warning。程序兼容这种传参，但推荐使用 `npm run dev:sign`、`npm run start:sign`、`npm run dev:at`、`npm run start:at`。
+npm 11 会把 `npm run dev -- --sign`、`npm run dev -- --mode 1` 这类未知参数当作 npm config 并输出 warning。程序兼容这种传参，但推荐使用 `npm run dev:sign`、`npm run start:sign`、`npm run dev:at`、`npm run start:at`、`npm run dev:mode1`、`npm run start:mode1`。
 
 ## 批量注册
 

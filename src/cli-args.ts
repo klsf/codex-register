@@ -4,6 +4,12 @@ function readNpmConfigValue(flag: string): string {
 }
 
 export function readArgValue(flag: string): string {
+    const inlinePrefix = `${flag}=`;
+    const inlineArg = process.argv.find((arg) => arg.startsWith(inlinePrefix));
+    if (inlineArg) {
+        return inlineArg.slice(inlinePrefix.length);
+    }
+
     const index = process.argv.indexOf(flag);
     if (index === -1) {
         return readNpmConfigValue(flag);

@@ -30,3 +30,5 @@ export const DEFAULT_REDIRECT_URI = "http://localhost:1455/auth/callback";
 export const DEFAULT_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 
 export const CHATGPT_BASE_URL = "https://chatgpt.com";
+
+export const CHATGPT_AUTH_CSRF_URL = "https://chatgpt.com/api/auth/csrf";
