@@ -12,7 +12,7 @@
 
 - Node.js 20.18+
 - 可用代理，默认读取 `config.json.defaultProxyUrl`
-- 一个可用邮箱 provider：`cloudflare`、`gmail` 或 `hotmail`
+- 一个可用邮箱 provider：`cloudflare`、`gmail`、`hotmail` 或 `mailnest`
 
 ## 快速开始
 
@@ -124,6 +124,11 @@ Cloudflare：
 - `cloudflareApiBaseUrl`：邮件 Worker 地址。
 - `cloudflareApiKey`：邮件 Worker 的 `x-api-key`。
 
+MailNest：
+
+- `mailNestApiKey`：Outlook 邮箱提供商迈巢的`api-key`，获取页面：https://mailnest.top/account。
+- `mailNestProjectCode`：迈巢提供临时与独占两种 Outlook 邮箱。填写该值，即项目代码，则使用对应项目的临时邮箱，不填则使用独占邮箱。项目代码获取页面：https://mailnest.top/buy-email。Codex 的项目代码默认为`chatgpt001`，可直接使用。
+
 CLIProxyAPI 自动上传：
 
 - `cliproxyApiAutoUploadAuth`：授权成功后是否自动上传 auth 文件。
@@ -174,6 +179,20 @@ CLIProxyAPI 自动上传：
 ```
 
 程序会随机取一个账号生成别名邮箱，刷新 token，并读取收件箱和垃圾箱里的验证码邮件。刷新后的 `refresh_token` 会回写到 `tokens.txt`。
+
+### MailNest
+
+Outlook 邮箱提供商迈巢，提供临时与独占两种 Outlook 邮箱，配置便捷，开箱即用。
+
+```json
+{
+  "provider": "mailnest",
+  "mailNestApiKey": "",
+  "mailNestProjectCode": "chatgpt001"
+}
+```
+
+字段含义已在**配置项**章节中阐述。
 
 ## 授权文件
 

@@ -8,6 +8,8 @@
   "cloudflareEmailDomain": "",
   "cloudflareApiBaseUrl": "",
   "cloudflareApiKey": "",
+  "mailNestApiKey": "",
+  "mailNestProjectCode": "chatgpt001",
   "cliproxyApiAutoUploadAuth": false,
   "cliproxyApiBaseUrl": "http://localhost:8317",
   "cliproxyApiManagementKey": ""
