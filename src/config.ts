@@ -1,7 +1,7 @@
 import {readFileSync} from "node:fs";
 import path from "node:path";
 
-export type MailProviderName = "gmail" | "hotmail" | "cloudflare";
+export type MailProviderName = "gmail" | "hotmail" | "cloudflare" | "mailnest";
 
 interface AppConfigFile {
     provider?: unknown;
@@ -12,6 +12,8 @@ interface AppConfigFile {
     cloudflareEmailDomain?: unknown;
     cloudflareApiBaseUrl?: unknown;
     cloudflareApiKey?: unknown;
+    mailNestApiKey?: unknown,
+    mailNestProjectCode?: unknown,
     defaultProxyUrl?: unknown;
     cliproxyApiAutoUploadAuth?: unknown;
     cliproxyApiBaseUrl?: unknown;
@@ -27,6 +29,8 @@ export interface AppConfig {
     cloudflareEmailDomain: string;
     cloudflareApiBaseUrl: string;
     cloudflareApiKey: string;
+    mailNestApiKey: string;
+    mailNestProjectCode: string;
     defaultProxyUrl: string;
     cliproxyApiAutoUploadAuth: boolean;
     cliproxyApiBaseUrl: string;
@@ -43,6 +47,8 @@ const DEFAULT_CONFIG: AppConfig = {
     cloudflareApiBaseUrl: "",
     cloudflareApiKey: "",
     defaultProxyUrl: "http://127.0.0.1:10808",
+    mailNestApiKey: "",
+    mailNestProjectCode: "",
     cliproxyApiAutoUploadAuth: false,
     cliproxyApiBaseUrl: "http://localhost:8317",
     cliproxyApiManagementKey: "",
@@ -56,7 +62,7 @@ function normalizeNumber(value: unknown, fallback: number): number {
 }
 
 function normalizeProvider(value: unknown): MailProviderName {
-    if (value === "gmail" || value === "hotmail" || value === "cloudflare") {
+    if (value === "gmail" || value === "hotmail" || value === "cloudflare" || value === "mailnest") {
         return value;
     }
     return DEFAULT_CONFIG.provider;
@@ -115,6 +121,14 @@ function loadConfig(): AppConfig {
             typeof parsed.cloudflareApiKey === "string"
                 ? parsed.cloudflareApiKey.trim()
                 : DEFAULT_CONFIG.cloudflareApiKey,
+        mailNestApiKey:
+            typeof parsed.mailNestApiKey === "string"
+                ? parsed.mailNestApiKey.trim()
+                : DEFAULT_CONFIG.mailNestApiKey,
+        mailNestProjectCode:
+            typeof parsed.mailNestProjectCode === "string"
+            ? parsed.mailNestProjectCode.trim()
+            : DEFAULT_CONFIG.mailNestProjectCode,
         defaultProxyUrl:
             typeof parsed.defaultProxyUrl === "string"
                 ? parsed.defaultProxyUrl.trim()

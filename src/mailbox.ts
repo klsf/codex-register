@@ -2,6 +2,7 @@ import {appConfig, type MailProviderName} from "./config.js";
 import {createCloudflareProvider} from "./mail/cloudflare.js";
 import {createGmailProvider} from "./mail/gmail.js";
 import {createHotmailProvider} from "./mail/hotmail.js";
+import {createMailNestProvider} from "./mail/mailnest.js";
 
 export interface EmailCodeProvider {
   getEmailAddress(): Promise<string>;
@@ -22,6 +23,8 @@ function createProvider(): EmailCodeProvider {
       return createHotmailProvider();
     case "cloudflare":
       return createCloudflareProvider();
+    case "mailnest":
+      return createMailNestProvider();
     default:
       throw new Error(`不支持的邮箱 provider: ${MAILBOX_CONFIG.provider}`);
   }
